@@ -65,6 +65,7 @@ export SEE_THROUGH_DIR=/path/to/see-through
 | `scripts/setup_aituber.sh` | AITuberKit導入・モデル組み込みヘルパー |
 | `configs/layer_mapping.yaml` | レイヤー名マッピング定義 (育てる設定ファイル) |
 | `configs/aituberkit.env.example` | AITuberKit環境変数テンプレ (本構成向け・検証済み) |
+| `notebooks/see_through_free_gpu.ipynb` | See-throughをKaggle/Colab無料GPU枠で回すノートブック |
 | `tests/run_selftest.py` | ラウンドトリップ検証 (GPU不要) |
 
 ## 実装メモ

@@ -143,3 +143,20 @@ AITuberKit側は `NEXT_PUBLIC_SELECT_VOICE="stylebertvits2"` と
 **収益化を視野に入れる場合**、Live2D機能の商用制限が現時点の最大の制約。
 配信を非商用で始めて、収益化タイミングでAITuberKit作者への商用ライセンス相談
 ＋Live2D周りの最新条件確認、という順序を推奨。
+
+## ゼロ円で始める構成
+
+全工程が（当面）無料で成立する:
+
+| 項目 | 無料の根拠 |
+|---|---|
+| See-through分解 | Kaggle無料GPU枠 + `notebooks/see_through_free_gpu.ipynb`（docs/02参照） |
+| PSD正規化 | 本リポジトリのスクリプト（GPU不要） |
+| Cubism Editor | **PRO 42日間無料トライアル**で1体目を作る（期限後はFREE版は機能制限が強いためPRO契約を判断） |
+| AITuberKit | 個人の非商用利用は無料 |
+| Gemini API | 無料枠あり（レート制限内なら低頻度配信で十分） |
+| YouTube Data API v3 | 無料クォータ内で運用可能（大量ポーリング時は上限に注意） |
+| Style-Bert-VITS2 / OBS | 無料（OSS） |
+
+恒常的な費用が発生し得るのは「Cubism PROライセンス（トライアル後）」
+「Gemini無料枠超過」「収益化時の各種商用ライセンス」の3点のみ。

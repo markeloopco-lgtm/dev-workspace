@@ -67,9 +67,12 @@ GPU不要でどのPCでも動く。
 
 | サービス | 費用 | 備考 |
 |---|---|---|
-| RunPod / Vast.ai | RTX 4090 24GBで$0.5前後/時 | **確実に動く。量産の本命**。使った時間だけ課金 |
-| Kaggle Notebooks | 無料（週30時間のGPU枠） | T4/P100 16GB。GMOグループの実証例あり(※)。世代が古くbf16非対応のため設定調整が要る可能性 |
-| Google Colab | 無料枠T4 / Pro課金でL4等 | Kaggleと同様の注意 |
+| **Kaggle Notebooks** | **無料**（週30時間のGPU枠） | T4/P100 16GB。GMOグループの実証例あり(※)。**同梱の [`notebooks/see_through_free_gpu.ipynb`](../notebooks/see_through_free_gpu.ipynb) をアップロードすればそのまま使える** |
+| Google Colab | 無料枠T4 / Pro課金でL4等 | 同上のノートブックがColabでも動く設計 |
+| RunPod / Vast.ai | RTX 4090 24GBで$0.5前後/時 | 確実に動く。無料枠で足りなくなったら移行 |
+
+無料ノートブックはT4/P100のbf16非対応を考慮し、VRAMとbf16対応状況から
+実行プロファイル（デフォルト / group_offload / NF4量子化版）を自動選択する。
 
 ※ [GMOの実証記事](https://recruit.group.gmo/engineer/jisedai/blog/see-through-x-kaggle-x-claude-code/)
 「See-Through × Kaggle × Claude Codeで1枚絵からLive2Dモデルを（ほぼ）自動生成する」
