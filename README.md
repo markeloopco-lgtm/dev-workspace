@@ -16,7 +16,12 @@ scripts/normalize_psd.py で正規化      ← このリポジトリ (GPU不要)
 Cubism Editor でテンプレート適用       ← docs/03
   │  1体目のリグを流用、微調整のみ (1〜2時間/体)
   ▼
-.moc3 + model3.json → VTube Studio / AITuberKit
+.moc3 + model3.json
+  │
+  ▼
+AITuberKitで自動運用配信               ← docs/04
+   Geminiチャット応答 + Style-Bert-VITS2発話
+   + Live2Dリップシンク + OBS→YouTube
 ```
 
 ## セットアップ
@@ -54,9 +59,12 @@ export SEE_THROUGH_DIR=/path/to/see-through
 | `docs/01_illustration_spec.md` | 一枚絵の仕様・発注テンプレ・権利の注意 |
 | `docs/02_see_through_setup.md` | See-throughの導入とVRAM別設定 |
 | `docs/03_cubism_template_workflow.md` | Cubismテンプレート量産手順・チェックリスト |
+| `docs/04_aituber_runtime.md` | AITuber運用構成 (AITuberKit + Gemini + SBV2 + OBS) |
 | `scripts/normalize_psd.py` | PSDレイヤー正規化 (inspect / normalize / PNG書き出し) |
 | `scripts/batch_decompose.py` | 分解→正規化の一括ドライバ |
+| `scripts/setup_aituber.sh` | AITuberKit導入・モデル組み込みヘルパー |
 | `configs/layer_mapping.yaml` | レイヤー名マッピング定義 (育てる設定ファイル) |
+| `configs/aituberkit.env.example` | AITuberKit環境変数テンプレ (本構成向け・検証済み) |
 | `tests/run_selftest.py` | ラウンドトリップ検証 (GPU不要) |
 
 ## 実装メモ
