@@ -1,0 +1,8 @@
+.venv/
+__pycache__/
+*.pyc
+input/*
+output/*
+!input/.gitkeep
+!output/.gitkeep
+*.psd

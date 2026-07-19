@@ -1,0 +1,6 @@
+# PSD正規化パイプライン用 (See-through本体の依存は含まない — docs/02参照)
+psd-tools>=1.9
+pytoshop>=1.2
+numpy
+Pillow
+PyYAML

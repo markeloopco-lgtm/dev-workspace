@@ -1,0 +1,117 @@
+# See-through出力レイヤー → Live2D Cubism標準構造 のマッピング定義
+#
+# - rules: 上から順に評価し、最初にマッチしたルールを採用する。
+#   patterns は正規表現(大文字小文字無視)。元PSDの「フォルダパス+レイヤー名」に対して検索する。
+#   sided: true のルールは L/R(左/右)表記を検出して "_L"/"_R" を付与する。
+# - group_order: 正規化後のフォルダ重ね順(先頭が最前面)。
+#   Cubismのテンプレート機能はレイヤー名の一致で対応付けるため、
+#   ここの構造を全モデルで固定することが量産の要になる。
+#
+# 注意: See-through本体はレイヤー命名規則を公開していないため、
+# このパターン集は英語タグ/日本語の一般的な表記を広めにカバーしている。
+# 初回実行時に `inspect` で実際の出力名を確認し、未分類が出たらここに追記すること。
+
+canvas:
+  recommended_min: 1280   # see-through推奨処理解像度
+
+group_order:
+  - "00_前髪"
+  - "01_顔"
+  - "02_耳"
+  - "03_横髪"
+  - "04_体"
+  - "05_後髪"
+  - "06_背景"
+
+rules:
+  # --- 髪 ---
+  - name: "前髪"
+    group: "00_前髪"
+    patterns: ["front[_ ]?hair", "bangs?", "fringe", "前髪"]
+  - name: "アホ毛"
+    group: "00_前髪"
+    patterns: ["ahoge", "hair[_ ]?antenna", "アホ毛"]
+  - name: "横髪"
+    group: "03_横髪"
+    sided: true
+    patterns: ["side[_ ]?hair", "sidelocks?", "横髪"]
+  - name: "後髪"
+    group: "05_後髪"
+    patterns: ["back[_ ]?hair", "後髪", "後ろ髪"]
+  # 前後の指定がない hair はいったん前髪扱いにして inspect で確認する
+  - name: "髪"
+    group: "00_前髪"
+    patterns: ["\\bhair\\b", "髪"]
+
+  # --- 顔パーツ (輪郭より前に評価する) ---
+  - name: "眉"
+    group: "01_顔"
+    sided: true
+    patterns: ["eyebrows?", "\\bbrows?\\b", "眉"]
+  - name: "まつげ"
+    group: "01_顔"
+    sided: true
+    patterns: ["eyelash", "lash", "まつげ", "睫毛"]
+  - name: "白目"
+    group: "01_顔"
+    sided: true
+    patterns: ["sclera", "eye[_ ]?white", "white[_ ]?of[_ ]?eye", "白目"]
+  - name: "瞳"
+    group: "01_顔"
+    sided: true
+    patterns: ["pupil", "iris", "eyeball", "瞳", "黒目"]
+  - name: "目"
+    group: "01_顔"
+    sided: true
+    patterns: ["\\beyes?\\b", "\\b目\\b"]
+  - name: "鼻"
+    group: "01_顔"
+    patterns: ["nose", "鼻"]
+  - name: "口"
+    group: "01_顔"
+    patterns: ["mouth", "lips?", "口"]
+  - name: "頬"
+    group: "01_顔"
+    patterns: ["cheek", "blush", "頬", "ほほ"]
+  - name: "顔"
+    group: "01_顔"
+    patterns: ["\\bface\\b", "head", "skin", "顔", "輪郭"]
+
+  # --- 耳 ---
+  - name: "耳"
+    group: "02_耳"
+    sided: true
+    patterns: ["\\bears?\\b", "耳"]
+
+  # --- 体まわり ---
+  - name: "首"
+    group: "04_体"
+    patterns: ["neck", "首"]
+  - name: "手"
+    group: "04_体"
+    sided: true
+    patterns: ["hands?", "finger", "手(?!袋)"]
+  - name: "腕"
+    group: "04_体"
+    sided: true
+    patterns: ["\\barms?\\b", "sleeve", "腕", "袖"]
+  - name: "脚"
+    group: "04_体"
+    sided: true
+    patterns: ["\\blegs?\\b", "foot", "feet", "脚", "足"]
+  - name: "服"
+    group: "04_体"
+    patterns: ["cloth", "shirt", "jacket", "dress", "skirt", "top", "wear",
+               "uniform", "sailor", "hoodie", "服", "衣装", "セーラー", "制服"]
+  - name: "アクセサリ"
+    group: "04_体"
+    patterns: ["accessor", "ribbon", "\\bbow\\b", "\\bhat\\b", "hairpin", "glasses",
+               "necklace", "earring", "handwear", "リボン", "帽子", "アクセ", "眼鏡", "メガネ"]
+  - name: "体"
+    group: "04_体"
+    patterns: ["body", "torso", "chest", "体", "胴"]
+
+  # --- 背景 ---
+  - name: "背景"
+    group: "06_背景"
+    patterns: ["background", "\\bbg\\b", "背景"]
