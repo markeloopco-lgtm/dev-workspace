@@ -67,13 +67,23 @@ python scripts/batch_decompose.py --input input/ --output output/ --vram 12gb
 まで一気に行う。分解済みPSDがすでにある場合は
 `--normalize-only <PSDフォルダ>` で正規化だけ実行できる。
 
-## 初回に必ずやること
+## 出力レイヤーのタグ体系(較正済み)
 
-See-through本体のレイヤー命名は公開仕様がないため、**1枚目の出力PSDに対して**
+See-through V3の実タグ体系はソース調査(ComfyUI-See-through nodes.py)で確認済みで、
+`configs/layer_mapping.yaml` は以下を前提に較正してある:
+
+- **body系**: front hair / back hair / head / neck / neckwear / topwear / handwear
+  / bottomwear / legwear / footwear / tail / wings / objects
+- **head系**: headwear / face / irides / eyebrow / eyewhite / eyelash / eyewear
+  / ears / earwear / nose / mouth
+- **左右分割**(接尾辞直付き): eyer / eyel / earr / earl / browr / browl / handwear-r / handwear-l
+- **前後分割**: hairf(前髪) / hairb(後髪)
+
+それでも本体のバージョンアップで命名が変わる可能性はあるため、**1枚目の出力PSDに対して**
 
 ```bash
 python scripts/normalize_psd.py inspect workspace/layerdiff_output/xxx.psd
 ```
 
-を実行し、未分類レイヤーが出たら `configs/layer_mapping.yaml` にパターンを追記する。
-以降は全モデルで同じマッピングが使い回せる。
+を実行して未分類ゼロを確認してから量産に入ること。未分類が出たら
+`configs/layer_mapping.yaml` にパターンを追記すれば以降の全モデルに効く。

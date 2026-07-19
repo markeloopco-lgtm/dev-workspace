@@ -26,17 +26,35 @@ CANVAS = 64
 
 # (レイヤー名, 期待グループ, 期待正規名)。期待グループNoneは未分類(99_unmatched)行き。
 # リスト先頭が最前面(pytoshopの仕様に合わせる)。
+# レイヤー名はSee-through V3の実タグ体系(ソース調査で確認)をそのまま使う。
 FIXTURE = [
     ("mystery_gadget", None, "mystery_gadget"),
+    ("headwear", "00_前髪", "帽子"),
     ("front hair", "00_前髪", "前髪"),
-    ("pupil_R", "01_顔", "瞳_R"),
-    ("eye_white_R", "01_顔", "白目_R"),
+    ("eyewear", "01_顔", "眼鏡"),
+    ("browr", "01_顔", "眉_R"),
+    ("browl", "01_顔", "眉_L"),
+    ("eyelash", "01_顔", "まつげ"),
+    ("irides", "01_顔", "瞳"),
+    ("eyewhite", "01_顔", "白目"),
+    ("nose", "01_顔", "鼻"),
     ("mouth", "01_顔", "口"),
     ("face", "01_顔", "顔"),
-    ("arm_L", "04_体", "腕_L"),
-    ("sailor_uniform", "04_体", "服"),
-    ("body", "04_体", "体"),
-    ("back_hair", "05_後髪", "後髪"),
+    ("head", "01_顔", "頭"),
+    ("earwear", "02_耳", "耳飾り"),
+    ("earr", "02_耳", "耳_R"),
+    ("earl", "02_耳", "耳_L"),
+    ("neckwear", "04_体", "首飾り"),
+    ("neck", "04_体", "首"),
+    ("handwear-r", "04_体", "手袋_R"),
+    ("topwear", "04_体", "服_上"),
+    ("bottomwear", "04_体", "服_下"),
+    ("legwear", "04_体", "靴下"),
+    ("footwear", "04_体", "靴"),
+    ("objects", "04_体", "小物"),
+    ("back hair", "05_後髪", "後髪"),
+    ("tail", "05_後髪", "尻尾"),
+    ("wings", "05_後髪", "翼"),
     ("background", "06_背景", "背景"),
 ]
 MARKER = {name: 10 + i for i, (name, _, _) in enumerate(FIXTURE)}
@@ -116,15 +134,19 @@ def main() -> int:
     if out_front != MARKER["mystery_gadget"]:
         errors.append(f"正規化後の最前面が想定外: marker={out_front}")
 
-    # 4) グループ順(psd-tools反復=最背面から → 背景が先頭、未分類が末尾)
-    expected_group_iter = ["06_背景", "05_後髪", "04_体", "01_顔", "00_前髪", "99_unmatched"]
+    # 4) グループ順(psd-tools反復=最背面から → 背景が先頭、未分類が末尾。空グループは省略)
+    populated = {g for _, g, _ in FIXTURE if g}
+    expected_group_iter = [g for g in reversed(cfg["group_order"]) if g in populated]
+    expected_group_iter.append("99_unmatched")
     if list(groups.keys()) != expected_group_iter:
         errors.append(f"グループ順不一致: {list(groups.keys())}")
 
-    # 5) グループ内の相対順維持(最背面から: 顔→口→白目→瞳)
-    face_names = [n for n, _ in groups.get("01_顔", [])]
-    if face_names != ["顔", "口", "白目_R", "瞳_R"]:
-        errors.append(f"顔グループ内の順序不一致: {face_names}")
+    # 5) 各グループ内の相対順維持(FIXTUREの逆順=最背面からの並びと一致するはず)
+    for grp in populated:
+        expected = [exp for _, g, exp in reversed(FIXTURE) if g == grp]
+        actual = [n for n, _ in groups.get(grp, [])]
+        if actual != expected:
+            errors.append(f"{grp} 内の順序不一致: {actual} (期待: {expected})")
 
     if errors:
         print("[FAIL]")

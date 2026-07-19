@@ -1,15 +1,22 @@
 # See-through出力レイヤー → Live2D Cubism標準構造 のマッピング定義
 #
 # - rules: 上から順に評価し、最初にマッチしたルールを採用する。
-#   patterns は正規表現(大文字小文字無視)。元PSDの「フォルダパス+レイヤー名」に対して検索する。
-#   sided: true のルールは L/R(左/右)表記を検出して "_L"/"_R" を付与する。
+#   patterns は正規表現(大文字小文字無視)。元PSDの「フォルダパス+レイヤー名」と、
+#   区切り文字(_-)をスペース化した表記の両方に対して検索する。
+#   sided: true のルールは区切り付きのL/R(左/右)表記を検出して "_L"/"_R" を付与する。
 # - group_order: 正規化後のフォルダ重ね順(先頭が最前面)。
 #   Cubismのテンプレート機能はレイヤー名の一致で対応付けるため、
 #   ここの構造を全モデルで固定することが量産の要になる。
 #
-# 注意: See-through本体はレイヤー命名規則を公開していないため、
-# このパターン集は英語タグ/日本語の一般的な表記を広めにカバーしている。
-# 初回実行時に `inspect` で実際の出力名を確認し、未分類が出たらここに追記すること。
+# このパターン集はSee-through本体のソース調査で確認した実タグ体系
+# (ComfyUI-See-through nodes.py より) に合わせて較正済み:
+#   V3 body: front hair / back hair / head / neck / neckwear / topwear / handwear
+#            / bottomwear / legwear / footwear / tail / wings / objects
+#   V3 head: headwear / face / irides / eyebrow / eyewhite / eyelash / eyewear
+#            / ears / earwear / nose / mouth
+#   左右分割(接尾辞直付き): eyer/eyel, earr/earl, browr/browl, handwear-r/-l,
+#   前後分割: hairf(前髪)/hairb(後髪)
+# モデルのバージョンアップで名前が変わったら inspect で確認してここに追記する。
 
 canvas:
   recommended_min: 1280   # see-through推奨処理解像度
@@ -24,26 +31,51 @@ group_order:
   - "06_背景"
 
 rules:
-  # --- 髪 ---
+  # --- 頭部・髪 ---
+  - name: "帽子"
+    group: "00_前髪"
+    patterns: ["headwear", "\\bhat\\b", "帽子"]
   - name: "前髪"
     group: "00_前髪"
-    patterns: ["front[_ ]?hair", "bangs?", "fringe", "前髪"]
+    patterns: ["front[_ ]?hair", "\\bhairf\\b", "bangs?", "fringe", "前髪"]
   - name: "アホ毛"
     group: "00_前髪"
     patterns: ["ahoge", "hair[_ ]?antenna", "アホ毛"]
+  - name: "後髪"
+    group: "05_後髪"
+    patterns: ["back[_ ]?hair", "\\bhairb\\b", "後髪", "後ろ髪"]
   - name: "横髪"
     group: "03_横髪"
     sided: true
     patterns: ["side[_ ]?hair", "sidelocks?", "横髪"]
-  - name: "後髪"
-    group: "05_後髪"
-    patterns: ["back[_ ]?hair", "後髪", "後ろ髪"]
   # 前後の指定がない hair はいったん前髪扱いにして inspect で確認する
   - name: "髪"
     group: "00_前髪"
     patterns: ["\\bhair\\b", "髪"]
 
-  # --- 顔パーツ (輪郭より前に評価する) ---
+  # --- 顔まわりの装着物 (「wear」を含むため衣服より先に評価する) ---
+  - name: "眼鏡"
+    group: "01_顔"
+    patterns: ["eyewear", "glasses", "眼鏡", "メガネ"]
+  - name: "耳飾り"
+    group: "02_耳"
+    patterns: ["earwear", "earring", "イヤリング", "耳飾り"]
+  - name: "首飾り"
+    group: "04_体"
+    patterns: ["neckwear", "necklace", "choker", "チョーカー", "首飾り"]
+  - name: "手袋"
+    group: "04_体"
+    sided: true
+    patterns: ["handwear", "gloves?", "手袋"]
+
+  # --- 顔パーツ (輪郭より先に評価する) ---
+  # 左右分割タグは接尾辞が直付き(browr等)のため明示ルールで対応する
+  - name: "眉_R"
+    group: "01_顔"
+    patterns: ["\\bbrowr\\b", "eyebrow[_ ]?r\\b"]
+  - name: "眉_L"
+    group: "01_顔"
+    patterns: ["\\bbrowl\\b", "eyebrow[_ ]?l\\b"]
   - name: "眉"
     group: "01_顔"
     sided: true
@@ -55,11 +87,17 @@ rules:
   - name: "白目"
     group: "01_顔"
     sided: true
-    patterns: ["sclera", "eye[_ ]?white", "white[_ ]?of[_ ]?eye", "白目"]
+    patterns: ["eyewhite", "eye[_ ]?white", "sclera", "white[_ ]?of[_ ]?eye", "白目"]
   - name: "瞳"
     group: "01_顔"
     sided: true
-    patterns: ["pupil", "iris", "eyeball", "瞳", "黒目"]
+    patterns: ["irides", "iris", "pupil", "eyeball", "瞳", "黒目"]
+  - name: "目_R"
+    group: "01_顔"
+    patterns: ["\\beyer\\b"]
+  - name: "目_L"
+    group: "01_顔"
+    patterns: ["\\beyel\\b"]
   - name: "目"
     group: "01_顔"
     sided: true
@@ -75,9 +113,19 @@ rules:
     patterns: ["cheek", "blush", "頬", "ほほ"]
   - name: "顔"
     group: "01_顔"
-    patterns: ["\\bface\\b", "head", "skin", "顔", "輪郭"]
+    patterns: ["\\bface\\b", "\\bskin\\b", "顔", "輪郭"]
+  # head(頭部ベース)はface(顔面)と別タグなので名前を分けて衝突を避ける
+  - name: "頭"
+    group: "01_顔"
+    patterns: ["\\bhead\\b", "\\b頭\\b"]
 
   # --- 耳 ---
+  - name: "耳_R"
+    group: "02_耳"
+    patterns: ["\\bearr\\b"]
+  - name: "耳_L"
+    group: "02_耳"
+    patterns: ["\\bearl\\b"]
   - name: "耳"
     group: "02_耳"
     sided: true
@@ -86,7 +134,7 @@ rules:
   # --- 体まわり ---
   - name: "首"
     group: "04_体"
-    patterns: ["neck", "首"]
+    patterns: ["\\bneck\\b", "首"]
   - name: "手"
     group: "04_体"
     sided: true
@@ -95,21 +143,45 @@ rules:
     group: "04_体"
     sided: true
     patterns: ["\\barms?\\b", "sleeve", "腕", "袖"]
+  - name: "服_上"
+    group: "04_体"
+    patterns: ["topwear", "shirt", "jacket", "hoodie", "sailor", "uniform",
+               "セーラー", "制服", "上着"]
+  - name: "服_下"
+    group: "04_体"
+    patterns: ["bottomwear", "skirt", "pants", "shorts", "スカート", "ズボン"]
+  - name: "靴下"
+    group: "04_体"
+    sided: true
+    patterns: ["legwear", "socks?", "stockings?", "tights", "靴下", "タイツ"]
+  - name: "靴"
+    group: "04_体"
+    sided: true
+    patterns: ["footwear", "shoes?", "boots?", "靴", "ブーツ"]
   - name: "脚"
     group: "04_体"
     sided: true
-    patterns: ["\\blegs?\\b", "foot", "feet", "脚", "足"]
-  - name: "服"
+    patterns: ["\\blegs?\\b", "\\bfoot\\b", "\\bfeet\\b", "脚", "足"]
+  - name: "小物"
     group: "04_体"
-    patterns: ["cloth", "shirt", "jacket", "dress", "skirt", "top", "wear",
-               "uniform", "sailor", "hoodie", "服", "衣装", "セーラー", "制服"]
+    patterns: ["objects?", "\\bprops?\\b", "小物"]
   - name: "アクセサリ"
     group: "04_体"
-    patterns: ["accessor", "ribbon", "\\bbow\\b", "\\bhat\\b", "hairpin", "glasses",
-               "necklace", "earring", "handwear", "リボン", "帽子", "アクセ", "眼鏡", "メガネ"]
+    patterns: ["accessor", "ribbon", "\\bbow\\b", "hairpin", "リボン", "アクセ"]
+  - name: "服"
+    group: "04_体"
+    patterns: ["cloth", "dress", "\\bwear\\b", "服", "衣装"]
   - name: "体"
     group: "04_体"
     patterns: ["body", "torso", "chest", "体", "胴"]
+
+  # --- 背面要素 (後髪グループにまとめて体より奥に置く) ---
+  - name: "尻尾"
+    group: "05_後髪"
+    patterns: ["tail", "尻尾", "しっぽ"]
+  - name: "翼"
+    group: "05_後髪"
+    patterns: ["wings?", "翼", "羽"]
 
   # --- 背景 ---
   - name: "背景"

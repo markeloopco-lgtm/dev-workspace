@@ -61,6 +61,8 @@ export SEE_THROUGH_DIR=/path/to/see-through
 
 ## 実装メモ
 
+- マッピング定義はSee-through V3の実タグ体系(ソース調査で確認)に較正済み。
+  実タグ28レイヤー相当のフィクスチャでラウンドトリップ検証している
 - PSD読み込みは psd-tools、書き出しは pytoshop。往復での重ね順反転
   (pytoshopはリスト先頭=最前面、psd-toolsは最背面から反復) はテストで検証済み
 - pytoshopのRLE圧縮はC拡張が必要なため zip 圧縮で書き出す
