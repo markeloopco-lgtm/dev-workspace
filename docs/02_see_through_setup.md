@@ -54,7 +54,49 @@ cd ComfyUI-See-through && pip install -r requirements.txt
 | 8GB | `inference_psd_quantized.py`（NF4量子化）を使う |
 
 手元にGPUがない場合、お試しは [HuggingFaceデモ](https://huggingface.co/spaces/24yearsold/see-through-demo)
-（1日1〜2枚）で可能。量産は不可なのでローカルGPUかクラウドGPU（RunPod等）を用意する。
+（1日1〜2枚）で可能。量産は不可なのでローカルGPUかクラウドGPU（下記）を用意する。
+
+## ローカルGPUが8GB未満の場合（クラウドGPU運用）
+
+VRAM 8GB未満（例: RTX 3050 Laptop 4GB）ではSee-throughはローカル実行できない。
+ただしSee-throughは量産時だけ動かすバッチ処理なので、**分解だけクラウドで回して
+PSDを回収し、正規化以降はローカルで行う**分業が現実的。正規化(`normalize_psd.py`)は
+GPU不要でどのPCでも動く。
+
+### 選択肢
+
+| サービス | 費用 | 備考 |
+|---|---|---|
+| RunPod / Vast.ai | RTX 4090 24GBで$0.5前後/時 | **確実に動く。量産の本命**。使った時間だけ課金 |
+| Kaggle Notebooks | 無料（週30時間のGPU枠） | T4/P100 16GB。GMOグループの実証例あり(※)。世代が古くbf16非対応のため設定調整が要る可能性 |
+| Google Colab | 無料枠T4 / Pro課金でL4等 | Kaggleと同様の注意 |
+
+※ [GMOの実証記事](https://recruit.group.gmo/engineer/jisedai/blog/see-through-x-kaggle-x-claude-code/)
+「See-Through × Kaggle × Claude Codeで1枚絵からLive2Dモデルを（ほぼ）自動生成する」
+
+### RunPodでの手順（例）
+
+1. PyTorchテンプレートでPod作成（GPU: RTX 4090、ディスク50GB以上。モデル重みのDLがあるため）
+2. Pod内でセットアップ（本ページ上部のスタンドアロン手順と同じ）:
+   ```bash
+   git clone https://github.com/shitagaki-lab/see-through && cd see-through
+   pip install torch==2.8.0+cu128 torchvision==0.23.0+cu128 torchaudio==2.8.0+cu128 \
+     --index-url https://download.pytorch.org/whl/cu128
+   pip install -r requirements.txt && ln -sf common/assets assets
+   ```
+3. 一枚絵をアップロード（RunPodのWeb端末へドラッグ&ドロップ、または `runpodctl send`）
+4. フォルダごと一括分解:
+   ```bash
+   python inference/scripts/inference_psd.py --srcp /workspace/inputs/ --save_to_psd
+   ```
+5. `workspace/layerdiff_output/*.psd` をダウンロードしてPodを停止（課金停止）
+6. ローカルで正規化だけ実行:
+   ```bash
+   python scripts/batch_decompose.py --normalize-only path/to/downloaded_psds/ --output output/
+   ```
+
+初回はモデル重みのダウンロードで時間がかかるため、量産時は一枚ずつでなく
+**まとめて処理してからPodを落とす**のがコスト効率が良い。
 
 ## 本パイプラインからの一括実行
 
