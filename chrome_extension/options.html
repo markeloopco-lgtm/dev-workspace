@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <title>YouTube AIアップロードアシスタント 設定</title>
+  <link rel="stylesheet" href="options.css" />
+</head>
+<body>
+  <h1>YouTube AIアップロードアシスタント 設定</h1>
+
+  <section>
+    <h2>1. Gemini API</h2>
+    <p class="hint">
+      APIキーは <a href="https://aistudio.google.com/apikey" target="_blank">Google AI Studio</a>
+      で無料発行できます（AITuberKitで使うキーと同じもので構いません）。
+      キーはこのブラウザ内にのみ保存されます。
+    </p>
+    <label>APIキー
+      <input type="password" id="api-key" placeholder="AIza..." />
+    </label>
+    <label>モデル名
+      <input type="text" id="model" placeholder="gemini-2.5-flash" />
+    </label>
+  </section>
+
+  <section>
+    <h2>2. チャンネルの基本情報</h2>
+    <p class="hint">
+      チャンネルごとに方向性・視聴者層・口調などを登録しておくと、生成時に自動で反映されます。<br />
+      チャンネルIDは YouTube Studio のURL
+      <code>studio.youtube.com/channel/<b>UCxxxx...</b></code> の部分です。
+      アップロード画面の「このチャンネルを登録」ボタンからも追加できます。
+    </p>
+    <div id="channel-list"></div>
+    <button id="add-channel" class="secondary">＋ チャンネルを追加</button>
+  </section>
+
+  <section>
+    <h2>3. 定型文（LINE誘導・チャンネル説明など）</h2>
+    <p class="hint">
+      登録した定型文は、生成のたびにチェックボックスで選んで概要欄の末尾に追加できます。
+    </p>
+    <div id="snippet-list"></div>
+    <button id="add-snippet" class="secondary">＋ 定型文を追加</button>
+  </section>
+
+  <div class="save-row">
+    <button id="save" class="primary">保存する</button>
+    <span id="status"></span>
+  </div>
+
+  <script src="options.js"></script>
+</body>
+</html>

@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "YouTube AIアップロードアシスタント",
+  "version": "1.0.0",
+  "description": "YouTube Studioのアップロード画面で、タイトルと概要欄をAI（Gemini）でワンタッチ入力。チャンネルごとの基本情報と定型文（LINE誘導・チャンネル説明など）に対応。",
+  "permissions": ["storage"],
+  "host_permissions": ["https://generativelanguage.googleapis.com/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://studio.youtube.com/*"],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "options_page": "options.html"
+}

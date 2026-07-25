@@ -21,6 +21,7 @@
 - [ ] Cubism Editor PROトライアルで1体目のマスターリグ作成（GUI作業。docs/03のチェックリストに沿ってユーザーを誘導）
 - [ ] Gemini APIキー・YouTube Data API v3キーの取得誘導 → .env設定
 - [ ] OBS設定（クロマキー）→ テスト配信
+- [ ] Chrome拡張（`chrome_extension/`）をChromeに読み込み → APIキー・チャンネル情報・定型文を設定（docs/06）。実際のYouTube Studio画面での動作は未検証
 
 ## リポジトリ構成
 
@@ -29,6 +30,7 @@
 - `scripts/batch_decompose.py`: 一括処理（`--normalize-only` はローカルで使う）
 - `configs/layer_mapping.yaml`: See-through V3実タグ体系に較正済み（ソース調査で検証）
 - `configs/aituberkit.env.example`: AITuberKit用env（変数名は本家.env.exampleに対し検証済み）
+- `chrome_extension/`: YouTube Studioアップロード画面でタイトル・概要欄をGemini（無料枠）でワンタッチ生成するChrome拡張。チャンネルごとの基本情報記憶・定型文（LINE誘導等）の選択追加に対応（docs/06）
 - `tests/run_selftest.py`: 正規化のラウンドトリップ検証。**Pythonコード変更時は必ず実行**
 
 ## 重要な技術的前提（再調査不要）

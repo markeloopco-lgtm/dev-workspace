@@ -1,0 +1,178 @@
+/* YouTube Studioへ注入するUI。yaia- プレフィックスで名前衝突を避ける */
+
+#yaia-launch-button {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 2147483646;
+  padding: 10px 16px;
+  border: none;
+  border-radius: 24px;
+  background: #1a73e8;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+#yaia-launch-button:hover {
+  background: #1765cc;
+}
+
+#yaia-panel {
+  position: fixed;
+  right: 24px;
+  bottom: 76px;
+  z-index: 2147483647;
+  width: 380px;
+  max-height: 80vh;
+  overflow-y: auto;
+  background: #fff;
+  color: #202124;
+  border-radius: 12px;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.35);
+  font-family: "Hiragino Sans", "Yu Gothic UI", "Meiryo", sans-serif;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+#yaia-panel .yaia-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 12px;
+  background: #1a73e8;
+  color: #fff;
+  border-radius: 12px 12px 0 0;
+  position: sticky;
+  top: 0;
+}
+
+#yaia-panel .yaia-title {
+  flex: 1;
+  font-weight: 600;
+}
+
+#yaia-panel .yaia-icon-btn {
+  border: none;
+  background: transparent;
+  color: #fff;
+  font-size: 14px;
+  cursor: pointer;
+  padding: 2px 6px;
+}
+
+#yaia-panel .yaia-body {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+#yaia-panel .yaia-label {
+  font-weight: 600;
+  margin-top: 4px;
+}
+
+#yaia-panel .yaia-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #dadce0;
+  border-radius: 6px;
+  padding: 8px;
+  font-size: 13px;
+  font-family: inherit;
+  resize: vertical;
+  background: #fff;
+  color: #202124;
+}
+
+#yaia-panel .yaia-notice {
+  background: #f1f3f4;
+  border-radius: 6px;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+#yaia-panel .yaia-notice.yaia-warn {
+  background: #fef7e0;
+}
+
+#yaia-panel .yaia-snippets {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: #f8f9fa;
+  border-radius: 6px;
+  padding: 8px;
+}
+
+#yaia-panel .yaia-snippet-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+#yaia-panel .yaia-btn {
+  border: 1px solid #dadce0;
+  background: #fff;
+  color: #1a73e8;
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  align-self: flex-start;
+}
+
+#yaia-panel .yaia-btn.yaia-primary {
+  background: #1a73e8;
+  border-color: #1a73e8;
+  color: #fff;
+  align-self: stretch;
+}
+
+#yaia-panel .yaia-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+#yaia-panel .yaia-status {
+  min-height: 18px;
+  color: #5f6368;
+}
+
+#yaia-panel .yaia-status.yaia-error {
+  color: #c5221f;
+}
+
+#yaia-panel .yaia-status.yaia-success {
+  color: #188038;
+}
+
+#yaia-panel .yaia-count {
+  text-align: right;
+  color: #5f6368;
+  font-size: 12px;
+}
+
+#yaia-panel .yaia-count.yaia-over {
+  color: #c5221f;
+  font-weight: 600;
+}
+
+#yaia-panel .yaia-result {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-top: 1px solid #dadce0;
+  padding-top: 8px;
+}
+
+#yaia-panel .yaia-hidden {
+  display: none;
+}
