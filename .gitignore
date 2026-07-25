@@ -6,3 +6,7 @@ output/*
 !input/.gitkeep
 !output/.gitkeep
 *.psd
+
+# YouTube投稿の認証情報 (絶対にコミットしない)
+configs/client_secret.json
+configs/.youtube_token.json

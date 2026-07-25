@@ -1,0 +1,77 @@
+# 金融解説チャンネル 自動動画生成 設定
+# 使い方は docs/06_finance_video_automation.md 参照
+# scripts/make_finance_video.py が読む
+
+channel:
+  name: "マネーのしくみ"          # チャンネル名（仮）。自由に変更してOK
+  tagline: "お金のしくみを、やさしく解説"
+
+video:
+  width: 1920
+  height: 1080
+  fps: 30
+  intro_sec: 3.5        # タイトルカードの長さ
+  outro_sec: 6.0        # 締め＋免責カードの長さ
+  cue_gap_sec: 0.4      # ナレーション1文ごとの間
+
+theme:
+  bg_top: "#0d1b2a"     # 背景グラデーション上端
+  bg_bottom: "#1b263b"  # 背景グラデーション下端
+  accent: "#f5b301"     # 強調色（金融らしいゴールド）
+  text: "#f5f5f5"
+  muted: "#9fb3c8"
+  caption_bg: "#06101c"
+  positive: "#2ec4b6"   # チャート系統色1
+  negative: "#e5636e"   # チャート系統色2
+
+fonts:
+  # 上から順に探して最初に見つかったものを使う
+  candidates:
+    - "C:/Windows/Fonts/meiryob.ttc"                          # Windows: メイリオ太字
+    - "C:/Windows/Fonts/meiryo.ttc"
+    - "C:/Windows/Fonts/YuGothB.ttc"
+    - "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"   # Linux
+    - "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"
+    - "/usr/share/fonts/opentype/unifont/unifont_jp.otf"      # 最終フォールバック
+
+# 立ち絵キャラ（任意）。空なら描画しない。
+# 一枚絵/Live2D計画のキャラ画像を解説役として使う場合にパスを入れる
+character:
+  base: ""              # 例: "input/finance_char.png"（透過PNG）
+  mouth_open: ""        # 口開き差分（任意。あれば口パクする）
+  height_ratio: 0.45    # 画面高さに対するキャラの大きさ
+
+script_gen:
+  model: "gemini-2.5-flash"   # 無料枠で使えるモデル
+  target_minutes: 6           # 目標尺（5〜10分の範囲で）
+  style: |
+    中立で落ち着いた解説。断定的な投資助言・銘柄推奨はしない。
+    専門用語には一言説明を添える。数値例は一般的な概算にとどめる。
+
+tts:
+  engine: "sbv2"        # "sbv2" = Style-Bert-VITS2 / "none" = 無音（テスト用）
+  endpoint: "http://127.0.0.1:5000"
+  model_id: 0
+  speaker_id: 0
+  style: "Neutral"
+  length: 1.0           # 話速。大きいほどゆっくり
+
+upload:
+  privacy: "private"    # API審査未了のプロジェクトはprivate固定になる（docs/06参照）
+  category_id: "27"     # 27 = 教育
+  made_for_kids: false
+  synthetic_media: true # AI生成コンテンツの開示（YouTube必須）
+  description_footer: |
+    ※本動画は情報提供を目的としたものであり、特定の金融商品の勧誘や投資助言ではありません。投資判断はご自身の責任でお願いします。
+    ※本動画の台本・音声はAIツールを用いて制作しています。
+
+# ネタ帳。`script --next` は output/videos/ に無い最初のトピックを使う
+topics:
+  - "複利とは何か？時間を味方につけるお金の増え方"
+  - "インデックス投資とアクティブ投資の違い"
+  - "円安・円高とは？私たちの生活への影響"
+  - "インフレとデフレ、どちらが怖い？"
+  - "ドルコスト平均法のメリットと弱点"
+  - "債券とは何か？株式との違い"
+  - "金利が上がると何が起きる？住宅ローンへの影響"
+  - "分散投資はなぜ大事？卵とカゴの話"

@@ -61,10 +61,14 @@ export SEE_THROUGH_DIR=/path/to/see-through
 | `docs/03_cubism_template_workflow.md` | Cubismテンプレート量産手順・チェックリスト |
 | `docs/04_aituber_runtime.md` | AITuber運用構成 (AITuberKit + Gemini + SBV2 + OBS) |
 | `docs/05_local_claude_code.md` | ローカルPCへの移行手順 (Claude Codeで続きを進める) |
+| `docs/06_finance_video_automation.md` | 金融解説チャンネルの動画自動生成 (台本→音声→動画→投稿) |
 | `CLAUDE.md` | ローカルClaude Code用の引き継ぎ書 (現状・残タスク・技術前提) |
 | `scripts/normalize_psd.py` | PSDレイヤー正規化 (inspect / normalize / PNG書き出し) |
 | `scripts/batch_decompose.py` | 分解→正規化の一括ドライバ |
 | `scripts/setup_aituber.sh` | AITuberKit導入・モデル組み込みヘルパー |
+| `scripts/make_finance_video.py` | 金融解説動画の自動生成 (Gemini台本 + SBV2音声 + Pillow/ffmpeg描画) |
+| `scripts/upload_youtube.py` | YouTube自動投稿 (Data API v3 / OAuth) |
+| `configs/finance_channel.yaml` | 解説チャンネル設定・ネタ帳 |
 | `configs/layer_mapping.yaml` | レイヤー名マッピング定義 (育てる設定ファイル) |
 | `configs/aituberkit.env.example` | AITuberKit環境変数テンプレ (本構成向け・検証済み) |
 | `notebooks/see_through_free_gpu.ipynb` | See-throughをKaggle/Colab無料GPU枠で回すノートブック |
