@@ -6,3 +6,7 @@ output/*
 !input/.gitkeep
 !output/.gitkeep
 *.psd
+
+# 温度監視 (docs/06)
+logs/
+tools/

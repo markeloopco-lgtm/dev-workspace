@@ -1,0 +1,9 @@
+# Windowsで実行するスクリプトはCRLFでチェックアウトする
+# (.ps1はUTF-8 BOM付きで保存すること。BOMが無いとWindows PowerShell 5.1が
+#  日本語をANSIとして読んで文字化けする)
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+
+# UNIX側で実行するもの
+*.sh  text eol=lf
+*.py  text eol=lf
