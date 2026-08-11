@@ -67,7 +67,7 @@ GPU不要でどのPCでも動く。
 
 | サービス | 費用 | 備考 |
 |---|---|---|
-| **Kaggle Notebooks** | **無料**（週30時間のGPU枠） | T4/P100 16GB。GMOグループの実証例あり(※)。**同梱の [`notebooks/see_through_free_gpu.ipynb`](../notebooks/see_through_free_gpu.ipynb) をアップロードすればそのまま使える** |
+| **Kaggle Notebooks** | **無料**（週30時間のGPU枠） | T4/P100 16GB。GMOグループの実証例あり(※)。**同梱の [`notebooks/see_through_free_gpu.ipynb`](../notebooks/see_through_free_gpu.ipynb) をアップロードすればそのまま使える**。初回の登録手順は [docs/07](07_kaggle_setup.md) |
 | Google Colab | 無料枠T4 / Pro課金でL4等 | 同上のノートブックがColabでも動く設計 |
 | RunPod / Vast.ai | RTX 4090 24GBで$0.5前後/時 | 確実に動く。無料枠で足りなくなったら移行 |
 

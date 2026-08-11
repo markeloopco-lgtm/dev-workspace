@@ -62,6 +62,7 @@ export SEE_THROUGH_DIR=/path/to/see-through
 | `docs/04_aituber_runtime.md` | AITuber運用構成 (AITuberKit + Gemini + SBV2 + OBS) |
 | `docs/05_local_claude_code.md` | ローカルPCへの移行手順 (Claude Codeで続きを進める) |
 | `docs/06_transcription.md` | 日本語文字起こし手順 (補助ツール・パイプライン本体とは独立) |
+| `docs/07_kaggle_setup.md` | Kaggle無料GPUの初回準備 (登録・電話番号認証・入出力の作法) |
 | `CLAUDE.md` | ローカルClaude Code用の引き継ぎ書 (現状・残タスク・技術前提) |
 | `scripts/normalize_psd.py` | PSDレイヤー正規化 (inspect / normalize / PNG書き出し) |
 | `scripts/batch_decompose.py` | 分解→正規化の一括ドライバ |
