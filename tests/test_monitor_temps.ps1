@@ -131,8 +131,114 @@ try {
     Write-Host '未取得の値の表示' -ForegroundColor Cyan
     Assert-Equal '  --  ' (Format-Temp $null) 'null は -- 表示'
     Assert-Equal ' 68.0℃' (Format-Temp 68.0)  '数値は小数1桁'
+
+    Write-Host ''
+    Write-Host 'nvidia-smiの実出力のパース' -ForegroundColor Cyan
+    # RTX 3050 Laptop の典型的な1行（消費電力とファンは取れないことが多い）
+    $g = ConvertFrom-NvidiaSmiCsv -Line 'NVIDIA GeForce RTX 3050 Laptop GPU, 58, 30, 1843, 4096, [N/A], [N/A]'
+    Assert-Equal 'NVIDIA GeForce RTX 3050 Laptop GPU' $g.Name 'GPU名'
+    Assert-Equal 58    $g.TempC      '温度'
+    Assert-Equal 30    $g.UtilPct    '使用率'
+    Assert-Equal 1843  $g.MemUsedMB  'VRAM使用量'
+    Assert-Equal 4096  $g.MemTotalMB 'VRAM総量'
+    Assert-Equal $null $g.PowerW     '消費電力が[N/A]ならnull'
+    Assert-Equal $null $g.FanPct     'ファンが[N/A]ならnull'
+
+    # 値が全部取れるデスクトップGPUのケース
+    $g2 = ConvertFrom-NvidiaSmiCsv -Line 'NVIDIA GeForce RTX 4070, 71, 99, 5120, 12288, 184.52, 62'
+    Assert-Equal 184.52 $g2.PowerW '消費電力（小数）'
+    Assert-Equal 62     $g2.FanPct 'ファン回転数'
+
+    Assert-Equal $null (ConvertFrom-NvidiaSmiCsv -Line '')            '空行はnull'
+    Assert-Equal $null (ConvertFrom-NvidiaSmiCsv -Line 'GPU, 58, 30') '列が足りない行はnull'
+
+    Write-Host ''
+    Write-Host '監視1周分の通し動作（センサーを差し替えて実行）' -ForegroundColor Cyan
+
+    # 実機のセンサーが無い環境で Start-Watch を通すためのスタブ
+    $script:StubGpuLine = 'NVIDIA GeForce RTX 3050 Laptop GPU, 58, 30, 1843, 4096, [N/A], [N/A]'
+    $script:StubCpuC = 62.0
+    function Test-IsWindows { return $true }
+    function Get-GpuSample { return ConvertFrom-NvidiaSmiCsv -Line $script:StubGpuLine }
+    function Get-CpuSample { $script:CpuSource = 'Stub'; return $script:StubCpuC }
+
+    # Start-Watch が読む設定（param既定値と同じ位置づけ）
+    $LogDir = $tmpDir
+    $NoLog = $false
+    $NoSound = $true
+    $ObsTextPath = Join-Path $tmpDir 'obs_live.txt'
+    $OnCritical = ''
+    $CpuWarn = 85; $CpuCrit = 95; $GpuWarn = 80; $GpuCrit = 87
+
+    $rc = Start-Watch -SingleShot $true
+    Assert-Equal 0 $rc '正常時の戻り値は0'
+
+    $liveCsv = Join-Path $tmpDir ('temps_{0:yyyy-MM-dd}.csv' -f (Get-Date))
+    Assert-Equal $true (Test-Path $liveCsv) '日付入りCSVが作られる'
+    $liveRows = @(Import-Csv -Path $liveCsv)
+    Assert-Equal 1     $liveRows.Count      '1サンプル記録される'
+    Assert-Equal '62.0' $liveRows[0].cpu_c  'CPU温度が記録される'
+    Assert-Equal '58.0' $liveRows[0].gpu_c  'GPU温度が記録される'
+    Assert-Equal '1843' $liveRows[0].gpu_mem_used_mb 'VRAMが記録される'
+    Assert-Equal 'ok'   $liveRows[0].status '58℃/62℃は正常'
+    Assert-Equal 'CPU 62℃ / GPU 58℃' (Get-Content $ObsTextPath -Raw) 'OBS用テキストも更新される'
+
+    # 危険域: ビープと警告を出しつつ記録は続く。
+    # ここは実際に熱くなったときにしか通らない経路なので、警告の組み立てが
+    # 実行時エラーを出していないことまで確認する
+    $script:StubGpuLine = 'NVIDIA GeForce RTX 3050 Laptop GPU, 91, 99, 3900, 4096, [N/A], [N/A]'
+    $script:StubCpuC = 97.0
+    $Error.Clear()
+    $rc = Start-Watch -SingleShot $true
+    Assert-Equal 0 $rc '危険域でも戻り値は0（監視自体は成功）'
+    Assert-Equal 0 $Error.Count '危険域の警告メッセージが実行時エラーを出さない'
+    if ($Error.Count -gt 0) { $Error | ForEach-Object { Write-Host "       $_" -ForegroundColor Red } }
+    $liveRows = @(Import-Csv -Path $liveCsv)
+    Assert-Equal 2      $liveRows.Count     '同じファイルに追記される'
+    Assert-Equal 'crit' $liveRows[-1].status '91℃/97℃は危険'
+
+    # GPUだけ取れてCPUが取れない環境でも監視が続くこと
+    $script:StubGpuLine = 'NVIDIA GeForce RTX 3050 Laptop GPU, 83, 90, 3000, 4096, [N/A], [N/A]'
+    function Get-CpuSample { $script:CpuSource = $null; return $null }
+    $rc = Start-Watch -SingleShot $true
+    Assert-Equal 0 $rc 'CPU温度が取れなくても0で終わる'
+    $liveRows = @(Import-Csv -Path $liveCsv)
+    Assert-Equal 3      $liveRows.Count      '3サンプル目も記録される'
+    Assert-Equal ''     $liveRows[-1].cpu_c  'CPU温度は空欄'
+    Assert-Equal '83.0' $liveRows[-1].gpu_c  'GPU温度は記録される'
+    Assert-Equal 'warn' $liveRows[-1].status 'GPUだけで警告判定される'
+
+    # -NoLog でCSVを書かないこと
+    $before = (Import-Csv -Path $liveCsv).Count
+    $NoLog = $true
+    $rc = Start-Watch -SingleShot $true
+    Assert-Equal $before (Import-Csv -Path $liveCsv).Count '-NoLog では追記されない'
+    $NoLog = $false
+
+    Write-Host ''
+    Write-Host '集計（-Summary）' -ForegroundColor Cyan
+    $LogFile = $liveCsv
+    $rc = Show-Summary
+    Assert-Equal 0 $rc '集計は0で終わる'
+    $LogFile = $null
+    $rc = Show-Summary   # LogDir内の最新を自動で拾う
+    Assert-Equal 0 $rc 'ファイル未指定なら最新ログを自動で選ぶ'
+} catch {
+    # 例外が素通りすると残りの検証が実行されないまま「パス」と表示されてしまうため、
+    # ここで必ず失敗として数える
+    $script:Checks++
+    $script:Failures++
+    Write-Host "  NG   予期しない例外で中断: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "       $($_.InvocationInfo.PositionMessage)" -ForegroundColor DarkGray
 } finally {
     Remove-Item $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+# 検証が途中で打ち切られていないかの番人（項目を増やしたらこの数も更新する）
+$expectedChecks = 65
+if ($script:Checks -lt $expectedChecks) {
+    Write-Host "  NG   検証が途中で終わっています（$script:Checks / $expectedChecks 件しか実行されていない）" -ForegroundColor Red
+    $script:Failures++
 }
 
 Write-Host ''

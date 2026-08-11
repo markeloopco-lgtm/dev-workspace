@@ -148,8 +148,15 @@ function Get-GpuSample {
     if (-not $raw) { return $null }
 
     # 複数GPUなら1台目（このPCはRTX 3050の1台構成）
-    $line = @($raw)[0]
-    $cols = $line -split ',' | ForEach-Object { $_.Trim() }
+    return ConvertFrom-NvidiaSmiCsv -Line (@($raw)[0])
+}
+
+# nvidia-smi --format=csv,noheader,nounits の1行をパースする
+# 例: 'NVIDIA GeForce RTX 3050 Laptop GPU, 58, 30, 1843, 4096, [N/A], [N/A]'
+function ConvertFrom-NvidiaSmiCsv {
+    param([string]$Line)
+    if ([string]::IsNullOrWhiteSpace($Line)) { return $null }
+    $cols = @($Line -split ',' | ForEach-Object { $_.Trim() })
     if ($cols.Count -lt 7) { return $null }
 
     return [pscustomobject]@{
@@ -436,8 +443,10 @@ function Invoke-CriticalAlert {
     $script:LastAlert = $now
 
     $detail = New-Object System.Collections.Generic.List[string]
-    if ($Sample.CpuStatus -eq 'crit') { $detail.Add('CPU {0:F1}℃ (しきい値 {1}℃)' -f $Sample.CpuC, $CpuCrit) }
-    if ($Sample.GpuStatus -eq 'crit') { $detail.Add('GPU {0:F1}℃ (しきい値 {1}℃)' -f $Sample.GpuC, $GpuCrit) }
+    # -f 全体を括弧で囲むこと。囲まないとカンマがメソッドの引数区切りとして解釈され、
+    # 書式に渡る引数が1つだけになって実行時エラーになる
+    if ($Sample.CpuStatus -eq 'crit') { $detail.Add(('CPU {0:F1}℃ (しきい値 {1}℃)' -f $Sample.CpuC, $CpuCrit)) }
+    if ($Sample.GpuStatus -eq 'crit') { $detail.Add(('GPU {0:F1}℃ (しきい値 {1}℃)' -f $Sample.GpuC, $GpuCrit)) }
     Write-Err ('温度が危険域です: ' + ($detail -join ' / '))
     Write-Err '配信を止める・負荷を下げる・吸気口をふさいでいないか確認してください。'
 

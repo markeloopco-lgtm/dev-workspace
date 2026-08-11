@@ -218,8 +218,12 @@ CPUの温度センサーはOSの通常APIからは読めず、CPUの内部レジ
 powershell -ExecutionPolicy Bypass -File tests\test_monitor_temps.ps1
 ```
 
-`monitor_temps.ps1` を変更したら必ず実行すること。しきい値判定・`nvidia-smi`出力の
-パース・CSVの書式・OBSテキスト出力を検証する（34項目）。
+`monitor_temps.ps1` を変更したら必ず実行すること（65項目）。しきい値判定・`nvidia-smi`
+出力のパース・CSVの書式・OBSテキスト出力に加え、センサーを差し替えて**監視1周分を
+実際に走らせる**通し確認（正常／危険域／CPUだけ取れない場合／`-NoLog`／`-Summary`）まで行う。
+
+項目を増やしたら末尾の `$expectedChecks` も更新すること。例外で検証が途中で
+打ち切られたのに「パス」と表示されるのを防ぐための番人になっている。
 
 `.ps1` は **UTF-8 BOM付き** で保存する。BOMが無いとWindows PowerShell 5.1が
 ANSIとして読み、日本語のメッセージが文字化けする。
