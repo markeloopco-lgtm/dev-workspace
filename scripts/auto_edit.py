@@ -124,7 +124,8 @@ def remap_time(t: float, keeps: list) -> float:
 
 
 def remap_events(events: list, keeps: list, min_duration: float,
-                 max_duration: float = None, reading_speed: float = None) -> list:
+                 max_duration: float = None, reading_speed: float = None,
+                 duration_padding: float = 0.0) -> list:
     """テロップ群を出力タイムラインへ写し、表示時間と重なりを整える。
 
     放送字幕の目安(2秒前後以上・6.5秒以下・毎秒約4文字)に寄せるが、
@@ -140,9 +141,9 @@ def remap_events(events: list, keeps: list, min_duration: float,
     for i, ev in enumerate(out):
         limit = out[i + 1].start if i + 1 < len(out) else total
         want_len = ev.end - ev.start
-        if reading_speed:  # 読み切れる長さを確保する
+        if reading_speed:  # 読み終わる時間 + 余裕 を確保する
             want_len = max(want_len, display_width(ev.text.replace("\\N", ""))
-                           / reading_speed)
+                           / reading_speed + duration_padding)
         want_len = max(want_len, min_duration)
         if max_duration:
             want_len = min(want_len, max_duration)
@@ -813,6 +814,7 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
 Style: Telop,{font},{fs},{text_color},{text_color},{ass_color(st['outline_color'])},{shadow_color},{bold},0,0,0,100,100,{spacing},0,1,{outline},{shadow},5,0,0,0,1
 Style: TelopEdge,{font},{fs},{outer},{outer},{outer},&H00000000,{bold},0,0,0,100,100,{spacing},0,1,{round(outline * 2.6, 1)},0,5,0,0,0,1
 Style: Shape,{font},{fs},&H00FFFFFF,&H00FFFFFF,&H00FFFFFF,&H00000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1
+Style: Side,{font},{max(10, round((cfg.get('side') or {}).get('font_size_ratio', 0.03) * height))},&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,{bold},0,0,0,100,100,{spacing},0,3,{round(max(10, (cfg.get('side') or {}).get('font_size_ratio', 0.03) * height) * 0.45, 1)},0,9,0,0,0,1
 Style: Title,{font},{title_fs},{ass_color(tl['text_color'])},{ass_color(tl['text_color'])},{ass_color(tl['bg_color'], tl['bg_opacity'])},{ass_color(tl['bg_color'], tl['bg_opacity'])},{bold},0,0,0,100,100,{spacing},0,3,{title_pad},0,7,0,0,0,1
 
 [Events]
@@ -826,6 +828,29 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             f"Dialogue: {layer},{start},{end},Shape,,0,0,0,,"
             f"{{\\p1\\pos(0,0)\\1c{ass_color(color)}{_alpha_tag(opacity)}\\bord0\\shad0}}"
             f"{path}{{\\p0}}")
+
+    # サイドテロップ: テレビの画面端に常時出ている見出し。
+    # 1行目を色付きの小見出し、2行目以降を暗色の本題にする(放送で定番の構成)
+    sd = cfg.get("side") or {}
+    side_lines = [l for l in (sd.get("text") or "").replace("\\n", "\n").split("\n")
+                  if l.strip()][:int(sd.get("max_lines") or 2)]
+    if side_lines:
+        sd_fs = max(10, round(sd["font_size_ratio"] * height))
+        sd_pad = round(sd_fs * 0.45, 1)
+        margin = sd["margin_ratio"] * height
+        right = sd.get("position", "top-right") == "top-right"
+        x = width - margin if right else margin
+        align = 9 if right else 7
+        y = margin
+        for i, text in enumerate(side_lines):
+            bg = sd["accent_color"] if i == 0 else sd["bg_color"]
+            fg = sd["heading_color"] if i == 0 else sd["text_color"]
+            lines.append(
+                f"Dialogue: 4,{ass_time(0)},{ass_time(total)},Side,,0,0,0,,"
+                f"{{\\an{align}\\pos({x:.0f},{y:.0f})\\q2"
+                f"\\1c{ass_color(fg)}\\3c{ass_color(bg, sd['bg_opacity'])}"
+                f"\\4c{ass_color(bg, sd['bg_opacity'])}}}{ass_escape(text)}")
+            y += sd_fs * st["line_height_em"] + sd_pad * 2 + 2
 
     if title_text:
         x, y = safe_x, title_margin
@@ -903,6 +928,11 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             parts.append(f"{{{tags}}}{escaped}{{{normal_tags}}}")
         return "".join(parts)
 
+    # テロップの出入り。テレビのテロップは瞬時に出ずに一拍かけて現れる
+    fade_in = int(round((cfg["telop"].get("fade_in") or 0) * 1000))
+    fade_out = int(round((cfg["telop"].get("fade_out") or 0) * 1000))
+    fade_tag = f"\\fad({fade_in},{fade_out})" if (fade_in or fade_out) else ""
+
     steps = max(1, int(bd["gradient_steps"])) if bd["gradient"] > 0 else 1
     for ev in events:
         s, e = ass_time(ev.start), ass_time(ev.end)
@@ -945,7 +975,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                       _rect(x0, y_top - accent_h, x1, y_top))
 
         cx = width / 2
-        common = f"\\q2" + (f"\\blur{blur}" if blur else "")
+        common = "\\q2" + fade_tag + (f"\\blur{blur}" if blur else "")
         # シーン/行数ごとにフォント・サイズ・縁取りを差し替える
         scene = scene_of(ev)
         if scene["font"] != font:
@@ -1160,7 +1190,8 @@ def make_telop_events(raw_events: list, plan: dict, cfg: dict) -> list:
         split.extend(split_telop(ev, limit, tc["max_lines"],
                                  tc["strip_trailing_period"]))
     return remap_events(split, keeps, tc["min_duration"],
-                        tc.get("max_duration"), tc.get("reading_speed"))
+                        tc.get("max_duration"), tc.get("reading_speed"),
+                        tc.get("duration_padding") or 0.0)
 
 
 def encoder_args(cfg: dict, use_nvenc: bool) -> list:

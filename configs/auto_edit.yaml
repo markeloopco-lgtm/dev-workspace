@@ -27,6 +27,9 @@ telop:
   min_duration: 1.2           # テロップの最低表示時間(秒)
   max_duration: 6.5           # 1枚あたりの最大表示時間(秒)
   reading_speed: 4.0          # 1秒あたりの読める文字数。表示時間の自動調整に使う
+  duration_padding: 0.5       # 読み終わってから消えるまでの余裕(秒)
+  fade_in: 0.08               # テロップが出るときのフェード(秒)。0で瞬時
+  fade_out: 0.08              # 消えるときのフェード(秒)
   strip_trailing_period: true # 文末の「。」を消す (放送字幕の慣習)
 
 style:                        # ニュース番組風テロップの見た目 (1080p基準・解像度に自動追従)
@@ -113,6 +116,18 @@ band:                         # テロップの下地 (座布団 / テロップ�
   corner_radius_em: 0.0       # 座布団の角丸 (文字サイズ比)
   accent_color: "E8B54D"      # 帯の上辺のアクセントライン (金色)
   accent_em: 0.075            # アクセントラインの太さ (文字サイズ比)
+
+side:                         # サイドテロップ (テレビの画面端に常時出ている見出し)
+  text: ""                    # 空なら非表示。改行で2行に。例: "特集\nエンジニアの転職"
+  position: top-right         # top-right / top-left (放送では右上が定番)
+  max_lines: 2
+  font_size_ratio: 0.030      # 画面上10分の1程度に収まる大きさ
+  heading_color: "1A1A1A"     # 1行目(色付き小見出し)の文字色
+  text_color: "FFFFFF"        # 2行目以降の文字色
+  accent_color: "E8B54D"      # 1行目の背景色
+  bg_color: "0B1A33"          # 2行目以降の背景色
+  bg_opacity: 0.9
+  margin_ratio: 0.045         # 画面端からの距離 / 画面高さ
 
 title:                        # 画面左上の番組名バー (ニュースの番組ロゴ枠風)
   text: ""                    # 空なら非表示。例: "AITuberニュース"

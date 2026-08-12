@@ -421,6 +421,49 @@ def test_emphasis():
     check(auto_edit.ass_color("FFE14D") in ass, "強調色がASSに出ていない")
 
 
+def test_tv_touches():
+    """テレビ寄りの仕上げ: 出入りのフェード・読了+余裕の表示時間・サイドテロップ。"""
+    cfg = auto_edit.load_config(auto_edit.DEFAULT_CONFIG, "talk")
+
+    # 出入りのフェードが入る (瞬時に出ると素人っぽくなる)
+    ass = auto_edit.build_ass([TelopEvent(0, 3, "テスト")], cfg, 1920, 1080, 5.0,
+                              font="F")
+    fin = int(cfg["telop"]["fade_in"] * 1000)
+    fout = int(cfg["telop"]["fade_out"] * 1000)
+    check(f"\\fad({fin},{fout})" in ass, f"フェードが入っていない: {fin}/{fout}")
+    off = copy.deepcopy(cfg)
+    off["telop"].update({"fade_in": 0, "fade_out": 0})
+    check("\\fad(" not in auto_edit.build_ass([TelopEvent(0, 3, "テスト")], off,
+                                              1920, 1080, 5.0, font="F"),
+          "フェード0でもタグが出ている")
+
+    # 表示時間 = 読み終わる時間 + 余裕
+    keeps = [(0.0, 60.0)]
+    text = "あ" * 10
+    out = auto_edit.remap_events([TelopEvent(0.0, 0.5, text)], keeps,
+                                 min_duration=0.5, max_duration=6.5,
+                                 reading_speed=5.0, duration_padding=0.5)
+    check(abs(out[0].end - (10 / 5.0 + 0.5)) < 1e-6,
+          f"読了+余裕の表示時間になっていない: {out[0].end}")
+
+    # サイドテロップ: 1行目が色付き見出し、2行目が本題
+    side = copy.deepcopy(cfg)
+    side["side"]["text"] = "特集\nエンジニアの転職"
+    ass = auto_edit.build_ass([TelopEvent(0, 3, "本文")], side, 1920, 1080, 9.0,
+                              font="F")
+    rows = [l for l in ass.splitlines() if ",Side,," in l]
+    check(len(rows) == 2, f"サイドテロップが2行出ていない: {len(rows)}")
+    check("特集" in rows[0] and "エンジニアの転職" in rows[1], "サイドの行順が想定外")
+    check(auto_edit.ass_color(side["side"]["accent_color"],
+                              side["side"]["bg_opacity"]) in rows[0],
+          "1行目の背景がアクセント色になっていない")
+    check("0:00:09.00" in rows[0], "サイドテロップが全編表示になっていない")
+    # 空なら出さない
+    check(",Side,," not in auto_edit.build_ass([TelopEvent(0, 3, "本文")], cfg,
+                                               1920, 1080, 9.0, font="F"),
+          "side.text が空なのに表示されている")
+
+
 def test_line_budget():
     """max_chars_per_line: auto は画面幅から1行の文字数を決める。"""
     cfg = auto_edit.load_config(auto_edit.DEFAULT_CONFIG, "talk")
@@ -661,6 +704,7 @@ def main() -> int:
     test_wrapped_font_size()
     test_round_rect()
     test_emphasis()
+    test_tv_touches()
     test_line_budget()
     test_line_spacing()
     test_speaker_band()
