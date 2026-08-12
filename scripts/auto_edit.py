@@ -550,6 +550,52 @@ def font_family_from_file(path: Path) -> str:
         return ""
 
 
+def font_weight_from_file(path: Path) -> int:
+    """OS/2 テーブルの usWeightClass を読む(400=標準, 700=太字)。不明なら0。"""
+    try:
+        with open(path, "rb") as f:
+            tag = f.read(4)
+            if tag == b"ttcf":
+                f.seek(12)
+                f.seek(struct.unpack(">I", f.read(4))[0])
+                f.read(4)
+            elif tag not in (b"\x00\x01\x00\x00", b"OTTO", b"true"):
+                return 0
+            num_tables = struct.unpack(">H", f.read(2))[0]
+            f.read(6)
+            for _ in range(num_tables):
+                rec = f.read(16)
+                if len(rec) < 16:
+                    return 0
+                if rec[:4] == b"OS/2":
+                    offset = struct.unpack(">I", rec[8:12])[0]
+                    f.seek(offset + 4)     # version(2) + xAvgCharWidth(2) の次
+                    return struct.unpack(">H", f.read(2))[0]
+    except (OSError, struct.error, ValueError):
+        pass
+    return 0
+
+
+def dropin_font_files(fonts_dir: Path = FONTS_DIR) -> dict:
+    """assets/fonts のフォントを {小文字ファミリ名: ファイルパス} で返す。"""
+    found = {}
+    if not fonts_dir.is_dir():
+        return found
+    for path in sorted(fonts_dir.iterdir()):
+        if path.suffix.lower() not in (".ttf", ".otf", ".ttc", ".otc"):
+            continue
+        family = font_family_from_file(path)
+        if family:
+            found.setdefault(family.lower(), path)
+    return found
+
+
+def font_is_already_bold(family: str) -> bool:
+    """その書体が最初から太いか。太字を二重に掛けて字が潰れるのを防ぐ判定。"""
+    path = dropin_font_files().get((family or "").lower())
+    return bool(path) and font_weight_from_file(path) >= 600
+
+
 def dropin_fonts(fonts_dir: Path = FONTS_DIR) -> dict:
     """assets/fonts に置かれたフォントの {小文字ファミリ名: 表示用ファミリ名}。"""
     found = {}
@@ -686,7 +732,16 @@ def build_ass(events: list, cfg: dict, width: int, height: int,
     shadow = round(st["shadow_em"] * fs, 1)
     spacing = round(st["tracking_em"] * fs, 1)
     safe_x = st["safe_margin_ratio"] * width
-    bold = -1 if st.get("bold", True) else 0
+
+    def wants_bold(font_name: str) -> bool:
+        """太字を掛けるべきか。既に太い書体に重ね掛けすると字が潰れる。"""
+        setting = st.get("bold", "auto")
+        if isinstance(setting, str) and setting.strip().lower() == "auto":
+            return not font_is_already_bold(font_name)
+        return bool(setting)
+
+    base_bold = wants_bold(font)
+    bold = -1 if base_bold else 0
     blur = float(st.get("blur") or 0)
 
     max_lines = cfg["telop"]["max_lines"]
@@ -872,6 +927,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         scene = scene_of(ev)
         if scene["font"] != font:
             common += f"\\fn{scene['font']}"
+            # シーン用フォントの太さが違う場合は太字指定も合わせる
+            if wants_bold(scene["font"]) != base_bold:
+                common += "\\b1" if wants_bold(scene["font"]) else "\\b0"
         if abs(size_scale - 1.0) > 0.001:
             common += (f"\\fs{ev_fs:.0f}\\bord{outline * size_scale:.1f}"
                        f"\\shad{shadow * size_scale:.1f}"

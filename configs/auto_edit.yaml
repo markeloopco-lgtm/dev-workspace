@@ -40,7 +40,8 @@ style:                        # ニュース番組風テロップの見た目 (1
     - Meiryo                  # Windows 標準
     - Yu Gothic UI
     - Yu Gothic
-  bold: true
+  # auto = 書体がすでに太ければ太字を掛けない (二重掛けで字が潰れるのを防ぐ)
+  bold: auto
   # 以下 *_em は「文字サイズに対する倍率」。画面解像度が変わっても比率が保たれる
   font_size_ratio: 0.062      # 1行のときの文字サイズ / 画面高さ
   font_size_ratio_wrapped: ~  # 2行になったときの文字サイズ (~ なら1行と同じ)
@@ -192,11 +193,12 @@ presets:
       reading_speed: 5.0
     style:
       font_candidates:
-        # UDゴシック。Windows 10/11 に最初から入っているのでDL不要
-        - BIZ UDPGothic
-        - Noto Sans JP Black         # 入れてあればこちらでもよい
+        # 源ノ角ゴシック Heavy 系。日本語の動画編集で最も広く使われている
+        - Source Han Sans JP Heavy   # Adobe Fonts の名前
+        - Noto Sans JP Black         # 同設計の無料版 (fetch_fonts.py で取得)
         - Noto Sans JP
         - Noto Sans CJK JP Black
+        - BIZ UDPGothic              # Windows標準。何も入れなくても動く
         - Meiryo
       # 1行のときは大きく見せ、2行になったら収まるサイズに切り替える
       # (UDゴシックは字面が大きいので、この比率でも十分大きく見える)
