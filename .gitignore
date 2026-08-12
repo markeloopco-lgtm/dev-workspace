@@ -6,3 +6,7 @@ output/*
 !input/.gitkeep
 !output/.gitkeep
 *.psd
+
+# フォント本体は再配布しない (assets/fonts/README.md の手順で各自DL)
+assets/fonts/*
+!assets/fonts/README.md

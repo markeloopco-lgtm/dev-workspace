@@ -12,6 +12,8 @@ BGMミックスを1回のエンコードで行う。全工程無料・GPU任意�
 usage:
   python scripts/auto_edit.py run 入力.mp4                 # 全自動 → 入力_edited.mp4
   python scripts/auto_edit.py run 入力.mp4 --bgm 曲.mp3    # BGM付き
+  python scripts/auto_edit.py preview 入力.mp4             # テロップの見た目を1枚確認
+  python scripts/auto_edit.py fonts                        # 使えるフォントを調べる
   python scripts/auto_edit.py analyze 入力.mp4             # カット計画の確認だけ
   python scripts/auto_edit.py transcribe 入力.mp4          # 文字起こしだけ (SRT)
   python scripts/auto_edit.py render 入力.mp4              # 保存済み計画/SRTで再レンダー
@@ -21,6 +23,7 @@ import argparse
 import json
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import unicodedata
@@ -29,7 +32,10 @@ from pathlib import Path
 
 import yaml
 
-DEFAULT_CONFIG = Path(__file__).resolve().parent.parent / "configs" / "auto_edit.yaml"
+ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_CONFIG = ROOT / "configs" / "auto_edit.yaml"
+# ここに .ttf/.otf を置くと、PCにインストールしなくてもテロップに使える
+FONTS_DIR = ROOT / "assets" / "fonts"
 
 SILENCE_RE = re.compile(r"silence_(start|end):\s*(-?[0-9.]+(?:[eE][+-]?\d+)?)")
 SRT_TIME_RE = re.compile(
@@ -111,8 +117,13 @@ def remap_time(t: float, keeps: list) -> float:
     return acc
 
 
-def remap_events(events: list, keeps: list, min_duration: float) -> list:
-    """テロップ群を出力タイムラインへ写し、最低表示時間と重なりを整える。"""
+def remap_events(events: list, keeps: list, min_duration: float,
+                 max_duration: float = None, reading_speed: float = None) -> list:
+    """テロップ群を出力タイムラインへ写し、表示時間と重なりを整える。
+
+    放送字幕の目安(2秒前後以上・6.5秒以下・毎秒約4文字)に寄せるが、
+    次のテロップの開始は必ず追い越さない。
+    """
     out = []
     for ev in sorted(events, key=lambda ev: ev.start):
         ns, ne = remap_time(ev.start, keeps), remap_time(ev.end, keeps)
@@ -122,9 +133,15 @@ def remap_events(events: list, keeps: list, min_duration: float) -> list:
     total = output_duration(keeps)
     for i, ev in enumerate(out):
         limit = out[i + 1].start if i + 1 < len(out) else total
-        want = max(ev.end, ev.start + min_duration)
+        want_len = ev.end - ev.start
+        if reading_speed:  # 読み切れる長さを確保する
+            want_len = max(want_len, display_width(ev.text.replace("\\N", ""))
+                           / reading_speed)
+        want_len = max(want_len, min_duration)
+        if max_duration:
+            want_len = min(want_len, max_duration)
         if limit > ev.start:
-            ev.end = min(want, limit)
+            ev.end = min(ev.start + want_len, limit)
     return out
 
 
@@ -135,11 +152,11 @@ def display_width(text: str) -> float:
 
 
 KINSOKU_HEAD = "、。！？!?…,)）」』"  # 行頭に置かない文字(簡易禁則)
+PUNCT_TAIL = "、。！？!?…,"           # ここで改行すると自然に読める文字
 
 
-def wrap_lines(text: str, max_chars: float) -> list:
-    """句読点・スペースを優先しつつ最大幅で改行する。"""
-    text = re.sub(r"\s+", " ", text.strip())
+def _wrap_greedy(text: str, max_chars: float) -> list:
+    """句読点・スペースの切れ目を優先しつつ、最大幅で順に折り返す。"""
     tokens = [t for t in re.split(r"(?<=[、。！？!?…,]) *| +", text) if t]
     lines, cur = [], ""
     for tok in tokens:
@@ -147,19 +164,13 @@ def wrap_lines(text: str, max_chars: float) -> list:
             lines.append(cur)
             cur = ""
         cur += tok
-        while display_width(cur) > max_chars:  # 句読点なしの長文は強制改行
-            w = display_width(cur)
+        while display_width(cur) > max_chars:  # 句読点で切れない長文は強制改行
             cut = len(cur)
             while cut > 1 and display_width(cur[:cut]) > max_chars:
                 cut -= 1
             rest = cur[cut:]
             if rest and all(c in KINSOKU_HEAD for c in rest):
                 break  # はみ出しが句読点だけなら、ぶら下げて1行に収める
-            if w <= max_chars * 2 and display_width(rest) < max_chars * 0.4:
-                # 2行目が極端に短くなるときは全体を半々に割る(見た目優先)
-                cut = len(cur)
-                while cut > 1 and display_width(cur[:cut]) > w / 2:
-                    cut -= 1
             while cut < len(cur) and cur[cut] in KINSOKU_HEAD:  # 行頭禁則
                 cut += 1
             if cut >= len(cur):
@@ -168,6 +179,40 @@ def wrap_lines(text: str, max_chars: float) -> list:
             cur = cur[cut:]
     if cur:
         lines.append(cur)
+    return lines
+
+
+def _balance_two(text: str, max_chars: float) -> list:
+    """2行に割る位置を全探索して選ぶ。行長が揃うほど良く、句読点の切れ目を優先。"""
+    best = None
+    for i in range(1, len(text)):
+        if text[i] in KINSOKU_HEAD:  # 行頭禁則
+            continue
+        left, right = text[:i].rstrip(), text[i:].lstrip()
+        if not left or not right:
+            continue
+        a, b = display_width(left), display_width(right)
+        if a > max_chars or b > max_chars:
+            continue
+        # 句読点で切れるなら多少行長がずれても優先する
+        score = abs(a - b) - (max_chars if text[i - 1] in PUNCT_TAIL else 0)
+        if best is None or score < best[0]:
+            best = (score, [left, right])
+    return best[1] if best else None
+
+
+def wrap_lines(text: str, max_chars: float) -> list:
+    """テロップ1枚ぶんの文字列を行に折り返す。
+
+    2行に収まる場合は行長を揃える。放送字幕は行長を揃えるのが基本で、
+    貪欲に詰めると「15文字 + 3文字」のような不格好な2行目になるため。
+    """
+    text = re.sub(r"\s+", " ", text.strip())
+    lines = _wrap_greedy(text, max_chars)
+    if len(lines) == 2:
+        balanced = _balance_two(text, max_chars)
+        if balanced:
+            lines = balanced
     return lines
 
 
@@ -243,27 +288,182 @@ def ass_escape(text: str) -> str:
     return text.replace("{", "(").replace("}", ")").replace("\n", "\\N")
 
 
-def build_ass(events: list, cfg: dict, width: int, height: int,
-              total: float, title_text: str = "") -> str:
-    """ニュース風スタイルのASS字幕を組み立てる。
+# ---------------------------------------------------------------- フォント解決
 
-    レイヤー0=帯(座布団), 1=アクセントライン, 2=本文。テロップ表示中だけ
-    帯が出る。タイトルはBorderStyle=3(文字に沿う不透明ボックス)で全編表示。
+def font_family_from_file(path: Path) -> str:
+    """TTF/OTF/TTCの name テーブルからファミリ名を読む。読めなければ空文字。
+
+    nameID 16(標準ファミリ)を優先し、無ければ 1(ファミリ)。Windows(platform 3)の
+    UTF-16BEレコードを優先する。libassはファミリ名で照合するため、置いたフォントを
+    `font: auto` で自動採用するのにこの名前が要る。
     """
-    st, tl = cfg["style"], cfg["title"]
-    scale = height / 1080.0
-    fs = max(8, round(st["font_size"] * scale))
-    outline = round(st["outline_width"] * scale, 1)
-    max_lines = cfg["telop"]["max_lines"]
-    line_h = fs * 1.3
-    pad_inner = 20 * scale
-    band_h = max_lines * line_h + 2 * pad_inner
-    bottom = st["bottom_margin"] * scale
-    y1 = height - bottom
-    y0 = y1 - band_h
-    accent_h = st["accent_height"] * scale
-    title_fs = max(8, round(tl["font_size"] * scale))
+    try:
+        with open(path, "rb") as f:
+            tag = f.read(4)
+            if tag == b"ttcf":                  # TTCは先頭フォントだけ見る
+                f.seek(12)
+                f.seek(struct.unpack(">I", f.read(4))[0])
+                f.read(4)
+            elif tag not in (b"\x00\x01\x00\x00", b"OTTO", b"true"):
+                return ""
+            num_tables = struct.unpack(">H", f.read(2))[0]
+            f.read(6)
+            name_off = name_len = 0
+            for _ in range(num_tables):
+                rec = f.read(16)
+                if len(rec) < 16:
+                    return ""
+                if rec[:4] == b"name":
+                    name_off, name_len = struct.unpack(">II", rec[8:16])
+                    break
+            if not name_len:
+                return ""
+            f.seek(name_off)
+            fmt, count, str_off = struct.unpack(">HHH", f.read(6))
+            records = [struct.unpack(">HHHHHH", f.read(12)) for _ in range(count)]
+            best = {}
+            for platform, encoding, _lang, name_id, length, offset in records:
+                if name_id not in (1, 16):
+                    continue
+                f.seek(name_off + str_off + offset)
+                raw = f.read(length)
+                try:
+                    value = (raw.decode("utf-16-be") if platform == 3
+                             else raw.decode("mac-roman" if platform == 1 else "utf-8"))
+                except (UnicodeDecodeError, LookupError):
+                    continue
+                value = value.strip()
+                if not value:
+                    continue
+                # 優先度: nameID16 > 1、platform 3 > その他
+                score = (2 if name_id == 16 else 1) * 2 + (1 if platform == 3 else 0)
+                if score > best.get("score", -1):
+                    best = {"score": score, "value": value}
+            return best.get("value", "")
+    except (OSError, struct.error, ValueError):
+        return ""
 
+
+def dropin_fonts(fonts_dir: Path = FONTS_DIR) -> dict:
+    """assets/fonts に置かれたフォントの {小文字ファミリ名: 表示用ファミリ名}。"""
+    found = {}
+    if not fonts_dir.is_dir():
+        return found
+    for path in sorted(fonts_dir.iterdir()):
+        if path.suffix.lower() not in (".ttf", ".otf", ".ttc", ".otc"):
+            continue
+        family = font_family_from_file(path)
+        if family:
+            found.setdefault(family.lower(), family)
+    return found
+
+
+def installed_font_families() -> set:
+    """PCにインストール済みのフォントのファミリ名(小文字)を集める。"""
+    names = set()
+    fc_list = shutil.which("fc-list")
+    if fc_list:
+        out = subprocess.run([fc_list, ":", "family"], capture_output=True, text=True)
+        for line in out.stdout.splitlines():
+            for part in line.split(","):
+                if part.strip():
+                    names.add(part.strip().lower())
+    if sys.platform == "win32":
+        try:
+            import winreg
+            for root, sub in (
+                (winreg.HKEY_LOCAL_MACHINE,
+                 r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts"),
+                (winreg.HKEY_CURRENT_USER,
+                 r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts"),
+            ):
+                try:
+                    key = winreg.OpenKey(root, sub)
+                except OSError:
+                    continue
+                with key:
+                    for i in range(winreg.QueryInfoKey(key)[1]):
+                        label = winreg.EnumValue(key, i)[0]
+                        # 例: "Meiryo & Meiryo Italic & ... (TrueType)"
+                        label = re.sub(r"\s*\((?:True|Open)Type\)\s*$", "", label)
+                        for part in label.split("&"):
+                            part = part.strip()
+                            if part:
+                                names.add(part.lower())
+        except Exception:  # レジストリが読めなくても致命的ではない
+            pass
+    return names
+
+
+def resolve_font(cfg: dict, quiet: bool = False) -> str:
+    """設定の font / font_candidates から実際に使えるフォント名を決める。"""
+    st = cfg["style"]
+    configured = (st.get("font") or "auto").strip()
+    candidates = ([configured] if configured.lower() != "auto"
+                  else list(st.get("font_candidates") or []))
+    if not candidates:
+        candidates = ["Noto Sans JP Black"]
+
+    available = dropin_fonts()
+    available.update({n: n for n in installed_font_families()})
+    for name in candidates:
+        if name.lower() in available:
+            return name
+    if not quiet:
+        print(f"[warn] テロップ用フォントが見つかりませんでした。{candidates[0]} を指定して"
+              f"続行します(表示が □ になる場合はフォントを入れてください: docs/06参照)",
+              file=sys.stderr)
+    return candidates[0]
+
+
+# ---------------------------------------------------------------- ASS字幕生成
+
+def _rect(x0: float, y0: float, x1: float, y1: float) -> str:
+    return f"m {x0:.0f} {y0:.0f} l {x1:.0f} {y0:.0f} {x1:.0f} {y1:.0f} {x0:.0f} {y1:.0f}"
+
+
+def _alpha_tag(opacity: float) -> str:
+    return f"\\1a&H{max(0, min(255, int(round((1.0 - opacity) * 255)))):02X}&"
+
+
+def build_ass(events: list, cfg: dict, width: int, height: int,
+              total: float, title_text: str = "", font: str = None) -> str:
+    """ニュース番組風のASS字幕を組み立てる。
+
+    寸法は画面高さに対する比率で持ち、解像度が変わっても同じ見た目になる
+    (放送のテロップ設計と同じ考え方)。レイヤーは 0=座布団のグラデーション、
+    1=上辺アクセント、2=二重縁取りの外側、3=本文、4=番組名バー。
+    """
+    st, bd, tl = cfg["style"], cfg["band"], cfg["title"]
+    if not font:  # 呼び出し側が解決済みの名前を渡さなかった場合の保険
+        font = st.get("font") or ""
+        if font.lower() in ("", "auto"):
+            font = (st.get("font_candidates") or ["Noto Sans JP Black"])[0]
+
+    fs = max(10, round(st["font_size_ratio"] * height))
+    outline = round(max(0.5, st["outline_em"] * fs), 1)
+    shadow = round(st["shadow_em"] * fs, 1)
+    spacing = round(st["tracking_em"] * fs, 1)
+    safe_x = st["safe_margin_ratio"] * width
+    bold = -1 if st.get("bold", True) else 0
+    blur = float(st.get("blur") or 0)
+
+    max_lines = cfg["telop"]["max_lines"]
+    line_h = fs * st["line_height_em"]
+    pad = bd["padding_em"] * fs
+    accent_h = bd["accent_em"] * fs
+    y_bottom = (height if bd["full_bleed"]
+                else height - bd["bottom_margin_ratio"] * height)
+    title_fs = max(10, round(tl["font_size_ratio"] * height))
+    title_pad = round(title_fs * 0.42, 1)
+    title_margin = tl["margin_ratio"] * height
+
+    def band_top(n_lines: int) -> float:
+        return y_bottom - (n_lines * line_h + 2 * pad)
+
+    text_color = ass_color(st["text_color"])
+    outer = ass_color(st["double_outline_color"])
+    shadow_color = ass_color("000000", st.get("shadow_opacity", 0.45))
     header = f"""[Script Info]
 ; auto_edit.py generated (news-style telop)
 ScriptType: v4.00+
@@ -271,43 +471,77 @@ PlayResX: {width}
 PlayResY: {height}
 WrapStyle: 2
 ScaledBorderAndShadow: yes
+YCbCr Matrix: TV.709
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Telop,{st['font']},{fs},{ass_color(st['text_color'])},{ass_color(st['text_color'])},{ass_color(st['outline_color'])},&H96000000,-1,0,0,0,100,100,0,0,1,{outline},0,5,0,0,0,1
-Style: Band,{st['font']},{fs},{ass_color(st['band_color'], st['band_opacity'])},{ass_color(st['band_color'], st['band_opacity'])},{ass_color(st['band_color'], st['band_opacity'])},&H00000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1
-Style: Accent,{st['font']},{fs},{ass_color(st['accent_color'])},{ass_color(st['accent_color'])},{ass_color(st['accent_color'])},&H00000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1
-Style: Title,{st['font']},{title_fs},{ass_color(tl['text_color'])},{ass_color(tl['text_color'])},{ass_color(tl['bg_color'], tl['bg_opacity'])},{ass_color(tl['bg_color'], tl['bg_opacity'])},-1,0,0,0,100,100,0,0,3,{round(12 * scale, 1)},0,7,0,0,0,1
+Style: Telop,{font},{fs},{text_color},{text_color},{ass_color(st['outline_color'])},{shadow_color},{bold},0,0,0,100,100,{spacing},0,1,{outline},{shadow},5,0,0,0,1
+Style: TelopEdge,{font},{fs},{outer},{outer},{outer},&H00000000,{bold},0,0,0,100,100,{spacing},0,1,{round(outline * 2.6, 1)},0,5,0,0,0,1
+Style: Shape,{font},{fs},&H00FFFFFF,&H00FFFFFF,&H00FFFFFF,&H00000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1
+Style: Title,{font},{title_fs},{ass_color(tl['text_color'])},{ass_color(tl['text_color'])},{ass_color(tl['bg_color'], tl['bg_opacity'])},{ass_color(tl['bg_color'], tl['bg_opacity'])},{bold},0,0,0,100,100,{spacing},0,3,{title_pad},0,7,0,0,0,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
     lines = [header.rstrip("\n")]
 
-    if title_text:
-        pos = f"\\pos({round(24 * scale)},{round(24 * scale)})"
-        lines.append(f"Dialogue: 3,{ass_time(0)},{ass_time(total)},Title,,0,0,0,,"
-                     f"{{\\an7{pos}}}{ass_escape(title_text)}")
+    def shape(layer: int, start: str, end: str, color: str, opacity: float,
+              path: str) -> None:
+        lines.append(
+            f"Dialogue: {layer},{start},{end},Shape,,0,0,0,,"
+            f"{{\\p1\\pos(0,0)\\1c{ass_color(color)}{_alpha_tag(opacity)}\\bord0\\shad0}}"
+            f"{path}{{\\p0}}")
 
-    band = (f"m 0 {y0:.0f} l {width} {y0:.0f} {width} {y1:.0f} 0 {y1:.0f}")
-    accent = (f"m 0 {y0 - accent_h:.0f} l {width} {y0 - accent_h:.0f} "
-              f"{width} {y0:.0f} 0 {y0:.0f}")
-    cy = (y0 + y1) / 2
+    if title_text:
+        x, y = safe_x, title_margin
+        # 左端の縦アクセントバー → 番組名ボックス(BorderStyle=3で文字に沿う)。
+        # ボックスの高さは「行の高さ + 上下パディング」になるのでバーもそれに合わせる
+        bar_w = max(2.0, title_fs * 0.13)
+        box_h = title_fs * st["line_height_em"] + title_pad * 2
+        shape(4, ass_time(0), ass_time(total), tl["accent_color"], 1.0,
+              _rect(x, y, x + bar_w, y + box_h))
+        lines.append(
+            f"Dialogue: 4,{ass_time(0)},{ass_time(total)},Title,,0,0,0,,"
+            f"{{\\an7\\pos({x + bar_w + title_pad:.0f},{y + title_pad:.0f})}}"
+            f"{ass_escape(title_text)}")
+
+    steps = max(1, int(bd["gradient_steps"])) if bd["gradient"] > 0 else 1
     for ev in events:
         s, e = ass_time(ev.start), ass_time(ev.end)
-        if cfg["style"]["band_enabled"]:
-            lines.append(f"Dialogue: 0,{s},{e},Band,,0,0,0,,"
-                         f"{{\\p1\\pos(0,0)}}{band}{{\\p0}}")
+        n_lines = min(max_lines, ev.text.count("\\N") + 1) if bd.get("fit_content") \
+            else max_lines
+        y_top = band_top(n_lines)
+
+        if bd["enabled"]:
+            # 帯: 上ほどわずかに透けるグラデーション。矩形を「下端まで」重ねて
+            # 不透明度を積み上げる(隣接矩形を並べると継ぎ目に縞が出るため)。
+            # 既存の不透明度Oに追加分aを重ねるとO+a(1-O)になるので、そこから逆算する。
+            prev = 0.0
+            for i in range(steps):
+                ratio = i / max(1, steps - 1) if steps > 1 else 1.0
+                target = bd["opacity"] * (1.0 - bd["gradient"] * (1.0 - ratio))
+                add = 1.0 if prev >= 1.0 else (target - prev) / (1.0 - prev)
+                prev = target
+                if add <= 0.001:
+                    continue
+                y = y_top + (y_bottom - y_top) * i / steps
+                shape(0, s, e, bd["color"], add, _rect(0, y, width, y_bottom))
             if accent_h >= 1:
-                lines.append(f"Dialogue: 1,{s},{e},Accent,,0,0,0,,"
-                             f"{{\\p1\\pos(0,0)}}{accent}{{\\p0}}")
-        lines.append(f"Dialogue: 2,{s},{e},Telop,,0,0,0,,"
-                     f"{{\\an5\\pos({width / 2:.0f},{cy:.0f})}}{ass_escape(ev.text)}")
+                shape(1, s, e, bd["accent_color"], 1.0,
+                      _rect(0, y_top - accent_h, width, y_top))
+
+        cx, cy = width / 2, (y_top + y_bottom) / 2
+        body = ass_escape(ev.text)
+        common = f"\\an5\\pos({cx:.0f},{cy:.0f})\\q2" + (f"\\blur{blur}" if blur else "")
+        # 帯なしで映像に直接乗せる場合の可読性確保として二重縁取りを選べる
+        if st.get("double_outline"):
+            lines.append(f"Dialogue: 2,{s},{e},TelopEdge,,0,0,0,,{{{common}}}{body}")
+        lines.append(f"Dialogue: 3,{s},{e},Telop,,0,0,0,,{{{common}}}{body}")
     return "\n".join(lines) + "\n"
 
 
 def build_filter_script(keeps: list, has_ass: bool, ass_name: str,
-                        bgm: dict, total: float) -> str:
+                        bgm: dict, total: float, fontsdir: str = "") -> str:
     """カット→連結→字幕焼き込み→BGMミックスのfilter_complexを組み立てる。
 
     入力0=本編動画, 入力1=BGM(あれば)。出力ラベルは常に [vout]/[aout]。
@@ -320,7 +554,10 @@ def build_filter_script(keeps: list, has_ass: bool, ass_name: str,
     parts.append(f"{''.join(pairs)}concat=n={len(keeps)}:v=1:a=1[vc][ac]")
 
     if has_ass:
-        parts.append(f"[vc]subtitles={ass_name}[vout]")
+        opts = f"subtitles={ass_name}"
+        if fontsdir:  # 同梱フォントをPCにインストールせずに使う
+            opts += f":fontsdir={fontsdir}"
+        parts.append(f"[vc]{opts}[vout]")
     else:
         parts.append("[vc]null[vout]")
 
@@ -442,7 +679,8 @@ def make_telop_events(raw_events: list, plan: dict, cfg: dict) -> list:
     for ev in raw_events:
         split.extend(split_telop(ev, tc["max_chars_per_line"], tc["max_lines"],
                                  tc["strip_trailing_period"]))
-    return remap_events(split, keeps, tc["min_duration"])
+    return remap_events(split, keeps, tc["min_duration"],
+                        tc.get("max_duration"), tc.get("reading_speed"))
 
 
 def encoder_args(cfg: dict, use_nvenc: bool) -> list:
@@ -457,19 +695,31 @@ def render(input_path: Path, plan: dict, events: list, cfg: dict,
            title_text: str = "") -> None:
     keeps = [tuple(seg) for seg in plan["keep_segments"]]
     total = output_duration(keeps)
-    ass_name = None
+    ass_name, fontsdir = None, ""
     if events or title_text:
+        font = resolve_font(cfg)
+        print(f"  テロップのフォント: {font}")
         ass_name = "telop.ass"
         (workdir / ass_name).write_text(
-            build_ass(events, cfg, plan["width"], plan["height"], total, title_text),
+            build_ass(events, cfg, plan["width"], plan["height"], total,
+                      title_text, font=font),
             encoding="utf-8")
+        # assets/fonts のフォントは作業フォルダに複製し、相対パスでfontsdirに渡す
+        if dropin_fonts():
+            local = workdir / "fonts"
+            local.mkdir(exist_ok=True)
+            for src in FONTS_DIR.iterdir():
+                if src.suffix.lower() in (".ttf", ".otf", ".ttc", ".otc"):
+                    shutil.copy2(src, local / src.name)
+            fontsdir = "fonts"
 
     bgm_cfg = None
     if bgm_path:
         bgm_cfg = {"volume_db": cfg["bgm"]["volume_db"], "fade": cfg["bgm"]["fade"],
                    "ducking": cfg["bgm"]["ducking"]}
     (workdir / "filter.txt").write_text(
-        build_filter_script(keeps, ass_name is not None, ass_name or "", bgm_cfg, total),
+        build_filter_script(keeps, ass_name is not None, ass_name or "", bgm_cfg,
+                            total, fontsdir),
         encoding="utf-8")
 
     ffmpeg = need_tool("ffmpeg")
@@ -514,6 +764,73 @@ def print_plan_summary(plan: dict) -> None:
     print(f"  元の長さ : {plan['duration']:.1f}秒")
     print(f"  編集後   : {total:.1f}秒 ({len(keeps)}区間)")
     print(f"  カット   : {cut:.1f}秒 ({cut / plan['duration'] * 100:.0f}%削減)")
+
+
+SAMPLE_TELOP = ["ライブ配信の自動編集システムが", "きょう公開されました"]
+
+
+def cmd_fonts(args) -> int:
+    cfg = load_config(Path(args.config))
+    drop = dropin_fonts()
+    installed = installed_font_families()
+    print(f"assets/fonts に置かれたフォント: "
+          f"{', '.join(drop.values()) if drop else '(なし)'}")
+    print("候補フォントの状況 (上から順に使われる):")
+    for name in (cfg["style"].get("font_candidates") or []):
+        if name.lower() in drop:
+            state = "○ assets/fonts にあり"
+        elif name.lower() in installed:
+            state = "○ インストール済み"
+        else:
+            state = "×  無し"
+        print(f"  {state:<20} {name}")
+    print(f"\n実際に使うフォント: {resolve_font(cfg)}")
+    print("見た目を確認するには: python scripts/auto_edit.py preview 動画.mp4")
+    return 0
+
+
+def cmd_preview(args) -> int:
+    """テロップの見た目だけを静止画1枚で確認する(動画を丸ごと書き出さない)。"""
+    cfg = load_config(Path(args.config))
+    ffmpeg = need_tool("ffmpeg")
+    wd = Path(args.output).resolve().parent
+    wd.mkdir(parents=True, exist_ok=True)
+    frame = wd / "_preview_frame.png"
+
+    if args.input:
+        info = probe(Path(args.input))
+        width, height = info["width"], info["height"]
+        subprocess.run([ffmpeg, "-y", "-v", "error", "-ss",
+                        f"{info['duration'] / 2:.2f}", "-i", str(Path(args.input).resolve()),
+                        "-frames:v", "1", str(frame)], check=True)
+    else:
+        width, height = 1920, 1080
+        subprocess.run([ffmpeg, "-y", "-v", "error", "-f", "lavfi", "-i",
+                        f"gradients=s={width}x{height}:c0=0x1b2838:c1=0x4a6d8c:d=1",
+                        "-frames:v", "1", str(frame)], check=True)
+
+    text = args.text or "\\N".join(SAMPLE_TELOP)
+    title = args.title if args.title is not None else cfg["title"]["text"]
+    font = resolve_font(cfg)
+    print(f"  テロップのフォント: {font}")
+    ass = wd / "_preview.ass"
+    ass.write_text(build_ass([TelopEvent(0.0, 5.0, text)], cfg, width, height,
+                             5.0, title, font=font), encoding="utf-8")
+
+    opts = f"subtitles={ass.name}"
+    if dropin_fonts():
+        local = wd / "fonts"
+        local.mkdir(exist_ok=True)
+        for src in FONTS_DIR.iterdir():
+            if src.suffix.lower() in (".ttf", ".otf", ".ttc", ".otc"):
+                shutil.copy2(src, local / src.name)
+        opts += ":fontsdir=fonts"
+    subprocess.run([ffmpeg, "-y", "-v", "error", "-i", frame.name, "-vf", opts,
+                    "-frames:v", "1", str(Path(args.output).resolve())],
+                   cwd=wd, check=True)
+    frame.unlink(missing_ok=True)
+    print("プレビュー画像を書き出しました:", args.output)
+    return 0
 
 
 def cmd_analyze(args) -> int:
@@ -662,6 +979,18 @@ def main() -> int:
     common(p)
     p.add_argument("--plan", help="カット計画JSON (省略時: 作業フォルダのplan.json)")
     p.set_defaults(func=cmd_render)
+
+    p = sub.add_parser("preview", help="テロップの見た目を静止画1枚で確認する")
+    p.add_argument("input", nargs="?", help="入力動画 (省略時は無地の背景で確認)")
+    p.add_argument("--config", default=str(DEFAULT_CONFIG))
+    p.add_argument("-o", "--output", default="telop_preview.png")
+    p.add_argument("--text", help="サンプル文言 (改行は \\N)")
+    p.add_argument("--title", help="左上の番組名バー")
+    p.set_defaults(func=cmd_preview)
+
+    p = sub.add_parser("fonts", help="使えるテロップ用フォントを調べる")
+    p.add_argument("--config", default=str(DEFAULT_CONFIG))
+    p.set_defaults(func=cmd_fonts)
 
     args = parser.parse_args()
     return args.func(args)

@@ -59,6 +59,7 @@ export SEE_THROUGH_DIR=/path/to/see-through
 ```bash
 # 録画のニュース風自動編集 (無音カット+テロップ+BGM。要ffmpeg → docs/06)
 pip install -r requirements-autoedit.txt
+python scripts/auto_edit.py preview 録画.mp4 --title "番組名"   # 見た目を1枚確認
 python scripts/auto_edit.py run 録画.mp4 --bgm bgm.mp3 --title "番組名"
 ```
 
@@ -76,8 +77,9 @@ python scripts/auto_edit.py run 録画.mp4 --bgm bgm.mp3 --title "番組名"
 | `scripts/normalize_psd.py` | PSDレイヤー正規化 (inspect / normalize / PNG書き出し) |
 | `scripts/batch_decompose.py` | 分解→正規化の一括ドライバ |
 | `scripts/setup_aituber.sh` | AITuberKit導入・モデル組み込みヘルパー |
-| `scripts/auto_edit.py` | ニュース風自動編集 (run / analyze / transcribe / render) |
+| `scripts/auto_edit.py` | ニュース風自動編集 (run / preview / fonts / analyze / transcribe / render) |
 | `configs/auto_edit.yaml` | 自動編集の設定 (カットしきい値・テロップ様式・BGM) |
+| `assets/fonts/` | テロップ用フォントの置き場 (置くだけで使われる。DL手順は同梱README) |
 | `configs/layer_mapping.yaml` | レイヤー名マッピング定義 (育てる設定ファイル) |
 | `configs/aituberkit.env.example` | AITuberKit環境変数テンプレ (本構成向け・検証済み) |
 | `notebooks/see_through_free_gpu.ipynb` | See-throughをKaggle/Colab無料GPU枠で回すノートブック |

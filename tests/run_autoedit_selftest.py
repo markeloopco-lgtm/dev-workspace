@@ -10,8 +10,8 @@ ffmpegが無い環境では後半をスキップし、その旨を表示して�
 usage: python tests/run_autoedit_selftest.py
 """
 
-import json
 import math
+import re
 import shutil
 import struct
 import subprocess
@@ -103,10 +103,15 @@ def test_wrap_and_split():
     lines = auto_edit.wrap_lines("あ" * 25, 10)
     check(lines == ["あ" * 10, "あ" * 10, "あ" * 5], f"強制改行が想定外: {lines}")
 
-    # 2行目が1文字だけ残るような改行は半々に割ってバランスさせる
+    # 2行に収まる長さは行長を揃える(貪欲だと2行目が極端に短くなる)
     lines = auto_edit.wrap_lines("本日の主なニュースをお伝えします", 15)
     check(lines == ["本日の主なニュー", "スをお伝えします"],
           f"バランス改行が想定外: {lines}")
+    lines = auto_edit.wrap_lines("Live2Dモデルの量産計画が明らかになりました", 15)
+    widths = [auto_edit.display_width(l) for l in lines]
+    check(len(lines) == 2 and abs(widths[0] - widths[1]) <= 1.0,
+          f"半角混じりのバランス改行が想定外: {lines} {widths}")
+    check(all(w <= 15 for w in widths), f"最大幅を超えている: {widths}")
 
     # 半角は0.5幅で数える
     check(auto_edit.display_width("abcd") == 2.0, "半角幅の計算が想定外")
@@ -136,15 +141,91 @@ def test_srt_roundtrip():
 def test_ass_build():
     cfg = auto_edit.load_config(auto_edit.DEFAULT_CONFIG)
     events = [TelopEvent(0.0, 2.0, "ニュース速報{}"), TelopEvent(2.0, 65.5, "二枚目")]
-    ass = auto_edit.build_ass(events, cfg, 1920, 1080, 70.0, title_text="番組名")
+    ass = auto_edit.build_ass(events, cfg, 1920, 1080, 70.0, title_text="番組名",
+                              font="TestFont")
     check("PlayResX: 1920" in ass and "PlayResY: 1080" in ass, "PlayResが無い")
-    check(ass.count("Dialogue:") == 2 * 3 + 1,
-          f"イベント数が想定外(帯+アクセント+本文x2+タイトル): {ass.count('Dialogue:')}")
+    check(ass.count(",Telop,") == len(events),
+          f"本文イベント数が想定外: {ass.count(',Telop,')}")
+    check(ass.count(",Shape,") >= 2 * 2 + 1, "帯・アクセント・タイトルバーが足りない")
     check("1:05.50" in ass, "ASS時刻書式が想定外")
     check("ニュース速報()" in ass and "速報{}" not in ass, "波括弧のエスケープ漏れ")
     check("番組名" in ass, "タイトルが入っていない")
+    def fontnames(text):
+        return {l.split(",")[1] for l in text.splitlines() if l.startswith("Style: ")}
+    check(fontnames(ass) == {"TestFont"}, f"フォント名が反映されていない: {fontnames(ass)}")
+    # font: auto をそのままフォント名として書き出さない (候補の先頭に解決する)
+    auto = auto_edit.build_ass(events, cfg, 1920, 1080, 70.0)
+    check(fontnames(auto) == {cfg["style"]["font_candidates"][0]},
+          f"font: auto の解決が想定外: {fontnames(auto)}")
     check(auto_edit.ass_color("FFB400", 1.0) == "&H0000B4FF", "色変換が想定外")
     check(auto_edit.ass_color("000000", 0.5) == "&H80000000", "透明度変換が想定外")
+
+    # 寸法は画面高さに追従する (1080p と 720p で比率が一致)
+    small = auto_edit.build_ass(events, cfg, 1280, 720, 70.0, font="TestFont")
+    def fontsize(text):
+        line = [l for l in text.splitlines() if l.startswith("Style: Telop,")][0]
+        return float(line.split(",")[2])
+    check(abs(fontsize(small) / 720 - fontsize(ass) / 1080) < 0.002,
+          "解像度で文字サイズ比が変わってしまう")
+
+
+def test_ass_gradient_band():
+    """帯のグラデーションは矩形を下端まで重ねて作る(隣接だと継ぎ目に縞が出る)。"""
+    cfg = auto_edit.load_config(auto_edit.DEFAULT_CONFIG)
+    cfg["band"].update({"gradient": 0.3, "gradient_steps": 8, "opacity": 0.8})
+    ass = auto_edit.build_ass([TelopEvent(0.0, 2.0, "帯")], cfg, 1920, 1080, 5.0,
+                              font="TestFont")
+    rects = re.findall(r"\\p1\\pos\(0,0\)[^}]*}m \d+ (\d+) l \d+ \d+ \d+ (\d+)",
+                       ass)
+    band = [(int(a), int(b)) for a, b in rects]
+    check(len(band) >= 8, f"グラデーションの段数が反映されていない: {len(band)}")
+    bottoms = {b for _, b in band[:8]}
+    check(bottoms == {1080}, f"帯の矩形が下端(1080)で揃っていない: {bottoms}")
+    tops = [t for t, _ in band[:8]]
+    check(tops == sorted(tops), f"帯の矩形が上から順に積まれていない: {tops}")
+
+    # 累積した不透明度が設定値に一致する (1-(1-a1)(1-a2)... == opacity)
+    alphas = [int(m, 16) for m in re.findall(r"\\1a&H([0-9A-F]{2})&", ass)]
+    acc = 1.0
+    for a in alphas[:8]:
+        acc *= 1.0 - (1.0 - a / 255.0)
+    check(abs((1.0 - acc) - 0.8) < 0.02,
+          f"帯の最終的な不透明度が設定と合わない: {1 - acc:.3f}")
+
+
+def test_reading_speed():
+    """表示時間が読める速さ(毎秒4文字)に合わせて伸びる。"""
+    keeps = [(0.0, 30.0)]
+    events = [TelopEvent(0.0, 0.5, "あ" * 20)]   # 20文字 → 5秒必要
+    out = auto_edit.remap_events(events, keeps, min_duration=1.2,
+                                 max_duration=6.5, reading_speed=4.0)
+    check(abs(out[0].end - 5.0) < 1e-6, f"読み速度での延長が想定外: {out[0].end}")
+
+    events = [TelopEvent(0.0, 20.0, "短い")]     # 上限6.5秒で頭打ち
+    out = auto_edit.remap_events(events, keeps, 1.2, 6.5, 4.0)
+    check(abs(out[0].end - 6.5) < 1e-6, f"最大表示時間が効いていない: {out[0].end}")
+
+
+def test_font_helpers():
+    """フォント自動選択: 候補がPCに無ければ先頭候補にフォールバックする。"""
+    cfg = auto_edit.load_config(auto_edit.DEFAULT_CONFIG)
+    cfg["style"]["font_candidates"] = ["架空フォントA", "架空フォントB"]
+    check(auto_edit.resolve_font(cfg, quiet=True) == "架空フォントA",
+          "存在しない候補のフォールバックが想定外")
+    cfg["style"]["font"] = "明示指定フォント"
+    check(auto_edit.resolve_font(cfg, quiet=True) == "明示指定フォント",
+          "明示指定のフォントが尊重されていない")
+
+    # 実在するフォントファイルからファミリ名を読める (name テーブル解析)
+    out = subprocess.run(["fc-list", "--format=%{file}\\n"],
+                         capture_output=True, text=True)
+    files = [Path(p) for p in out.stdout.splitlines()
+             if p.lower().endswith((".ttf", ".otf"))]
+    if files:
+        got = [auto_edit.font_family_from_file(p) for p in files[:8]]
+        check(any(got), f"フォントファイルからファミリ名を読めない: {files[:8]}")
+    check(auto_edit.font_family_from_file(Path("/etc/hostname")) == "",
+          "フォントでないファイルで空文字を返さない")
 
 
 def test_filter_script():
@@ -235,6 +316,9 @@ def main() -> int:
     test_wrap_and_split()
     test_srt_roundtrip()
     test_ass_build()
+    test_ass_gradient_band()
+    test_reading_speed()
+    test_font_helpers()
     test_filter_script()
 
     ran_e2e = False
