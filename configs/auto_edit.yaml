@@ -1,0 +1,52 @@
+# 自動編集 (ジェットカット + テロップ + BGM) の設定
+# 使い方は docs/06_auto_edit.md 参照。数値を変えたら render だけやり直せば反映される。
+
+jetcut:
+  silence_threshold_db: -35   # これより小さい音を「無音」とみなす (声が切れるなら -40 へ)
+  min_silence: 0.4            # この長さ(秒)以上続く無音だけカットする
+  keep_padding: 0.08          # 発話区間の前後に残す余白(秒)。詰まりすぎるなら増やす
+  join_gap: 0.15              # この間隔(秒)以下で隣接する発話区間はつなげる
+  min_keep: 0.3               # これより短い発話区間はノイズとみなして捨てる
+
+telop:
+  model: small                # faster-whisperモデル (tiny/base/small/medium/large-v3)
+  language: ja
+  device: auto                # auto/cpu/cuda。CUDAで失敗したら自動でCPUに切り替わる
+  compute_type: int8          # VRAM 4GB・CPUでも動く省メモリ設定
+  max_chars_per_line: 15      # 1行の全角文字数目安 (ニュース字幕は13〜16)
+  max_lines: 2                # 同時表示の最大行数
+  min_duration: 1.0           # テロップの最低表示時間(秒)
+  strip_trailing_period: true # 文末の「。」を消す (放送字幕の慣習)
+
+style:                        # ニュース番組風テロップの見た目 (1080p基準・解像度に自動追従)
+  font: "BIZ UDPGothic"       # Windows 10/11標準の放送向けUDフォント
+  font_size: 62
+  text_color: "FFFFFF"        # 白文字
+  outline_color: "1E2A5A"     # 濃紺の縁取り
+  outline_width: 4
+  band_enabled: true          # 画面下部の帯 (座布団)
+  band_color: "0A1E3C"
+  band_opacity: 0.72          # 0=透明 〜 1=不透明
+  accent_color: "FFB400"      # 帯の上辺のアクセントライン (金色)
+  accent_height: 6
+  bottom_margin: 36           # 帯と画面下端の隙間
+
+title:                        # 画面左上の番組名バー (ニュースの「LIVE」枠風)
+  text: ""                    # 空なら非表示。例: "AITuberニュース"
+  font_size: 40
+  text_color: "FFFFFF"
+  bg_color: "B3261E"          # 赤帯
+  bg_opacity: 0.9
+
+bgm:
+  file: ""                    # BGMファイルのパス。空なら無し (--bgm で毎回指定してもよい)
+  volume_db: -18              # 声に対するBGM音量 (下げるほど静か)
+  loop: true                  # 動画の長さに合わせてループ
+  fade: 1.5                   # フェードイン/アウト(秒)
+  ducking: true               # 声が鳴っている間BGMを自動で下げる (ニュース風)
+
+encode:
+  video_codec: auto           # auto=NVENC(GPU)優先で失敗したらlibx264 / libx264 / h264_nvenc
+  crf: 18                     # libx264の画質 (小さいほど高画質・大容量)
+  preset: veryfast
+  audio_bitrate: 192k
