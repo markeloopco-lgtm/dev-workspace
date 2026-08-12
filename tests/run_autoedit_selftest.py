@@ -540,6 +540,29 @@ def test_font_helpers():
         check(any(got), f"フォントファイルからファミリ名を読めない: {files[:8]}")
     check(auto_edit.font_family_from_file(Path("/etc/hostname")) == "",
           "フォントでないファイルで空文字を返さない")
+    check(auto_edit.font_names_from_file(Path("/etc/hostname")) == ("", ""),
+          "フォントでないファイルで空のペアを返さない")
+
+    # 同梱フォントは「総称名」ではなく「ウェイト固有名」で指定する。
+    # 総称名のままだとシステムの同系統フォントに置き換わって細く描画される。
+    fonts_dir = Path(__file__).resolve().parent.parent / "assets" / "fonts"
+    drop = auto_edit.dropin_fonts(fonts_dir)
+    for alias, resolved in drop.items():
+        check(resolved.lower() in drop,
+              f"解決先 {resolved} が引けない")
+        path = auto_edit.dropin_font_files(fonts_dir).get(alias)
+        if path:
+            specific, generic = auto_edit.font_names_from_file(path)
+            check(resolved == (specific or generic),
+                  f"{alias} の解決先が固有名でない: {resolved}")
+            if generic and specific and generic != specific:
+                check(drop.get(generic.lower()) == specific,
+                      f"総称名 {generic} が固有名 {specific} に解決されない")
+
+    # ウェイトを読めるか (太字の二重掛け判定に使う)
+    for path in sorted(fonts_dir.glob("*.ttf"))[:3]:
+        check(auto_edit.font_weight_from_file(path) > 0,
+              f"ウェイトを読めない: {path.name}")
 
 
 def test_filter_script():

@@ -235,12 +235,19 @@ python scripts/auto_edit.py fonts
 
 | 優先順 | フォント | 入手 |
 |---|---|---|
-| 1 | **BIZ UDPGothic**（UDゴシック） | **Windows 10/11 に最初から入っている**のでDL不要。字面が大きく読みやすい |
-| 2 | Noto Sans JP Black | 源ノ角ゴシック Heavy と同設計の無料版。`fetch_fonts.py` で取得 |
-| 3 | メイリオ / 游ゴシック | Windows 標準 |
+| 1 | **源ノ角ゴシック Heavy**（Source Han Sans JP Heavy） | Adobe Fonts。契約していれば自動で使われる |
+| 2 | **Noto Sans JP Black** | 上と同設計の無料版。`python scripts/fetch_fonts.py get ゴシック太` で取得 |
+| 3 | BIZ UDPGothic | Windows 10/11 標準（DL不要のフォールバック） |
+| 4 | メイリオ / 游ゴシック | Windows 標準 |
 
-既定は **BIZ UDPGothic**。Windows標準なので、フォントを何も入れなくてもそのまま動く。
-別の書体にしたいときは下の「フォントを増やす」を参照。
+既定は **源ノ角ゴシック Heavy 系**。動画編集の実務で最も広く使われている書体で、
+「ゴシック体は動画では必須」と複数の実務者が挙げている（出典は末尾）。
+Adobe Fonts を契約していなくても、無料版の Noto Sans JP Black を入れれば同じ見た目になる。
+
+**同梱フォントは「ウェイト固有名」で指定される**（例: `Noto Sans JP` ではなく
+`Noto Sans JP Black`）。総称名のまま渡すと、システムに同系統の別フォントがある場合に
+そちらへ置き換わって細く描画されてしまうため。`python scripts/auto_edit.py fonts` に
+表示される名前が、実際に使われる名前。
 
 ### できあがるファイル
 
@@ -376,6 +383,22 @@ ffmpegがあれば合成動画で「無音検出→カット→テロップ焼�
 - ビジネス系は**白文字＋黒(濃色)の縁取り**が標準、強調は赤か黄
   — [見やすいテロップの入れ方](https://omniweb.jp/m25/)、
   [テロップデザインの基本完全ガイド](https://bopeblog.com/telop-design-youtube-font-layout-guide/)
+
+### YouTube編集で使われている書体（既定フォントの根拠）
+
+- **源ノ角ゴシック**が定番。「ゴシック体は動画では必須のフォント」「太さが7種類あり
+  使い勝手抜群」「信頼感と現代的な印象」
+  — [動画編集で使える無料フォント20選](https://manabi-choice.jp/video-free-japanese-fonts/)、
+  [プロが推薦するフリーフォント10選](https://workjoy-official.com/font/)
+- 実務で使われているフリーフォントのまとめ
+  — [YouTube編集者が実務で使っているフリーフォント](https://royspeak.jp/2024/01/09/youtube-fonts-recommendation/)、
+  [YouTubeで使えるおすすめフリーフォント35選](https://note.com/roja3_/n/n2adf4864590d)
+- 有料の定番は**UD新ゴ**（モリサワ。可読性・視認性重視）、
+  ビジネス系には**コーポレート・ロゴ**（源ノ角ゴシック系）
+  — [動画・映像で使えるフォントブランド特集](https://designpocket.jp/static/font/feature/douga-eizou.html)、
+  [テロップに使えるフォント一覧](https://varietytelop.com/2023/11/08/font/)
+- ジャンル別: ポップ系は**ラノベPOP**、子ども向けは**筑紫B丸ゴシック**
+  — [プロが愛用するAdobeフォントベスト3](https://studio-us.org/community-blog/blog/adobe-fonts-for-youtubers-top3/)
 
 ### 放送・字幕の基準 (news preset と共通の土台)
 

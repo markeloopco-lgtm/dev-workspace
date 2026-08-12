@@ -496,13 +496,25 @@ def ass_escape(text: str) -> str:
 
 # ---------------------------------------------------------------- フォント解決
 
-def font_family_from_file(path: Path) -> str:
-    """TTF/OTF/TTCの name テーブルからファミリ名を読む。読めなければ空文字。
+def font_names_from_file(path: Path) -> tuple:
+    """フォントファイルから (ウェイト固有のファミリ名, 総称ファミリ名) を読む。
 
-    nameID 16(標準ファミリ)を優先し、無ければ 1(ファミリ)。Windows(platform 3)の
-    UTF-16BEレコードを優先する。libassはファミリ名で照合するため、置いたフォントを
-    `font: auto` で自動採用するのにこの名前が要る。
+    例: NotoSansJP-900.ttf は nameID 1 が "Noto Sans JP Black"、
+    nameID 16 が "Noto Sans JP"。総称名で指定すると、システムに同名系統の
+    別フォント(Noto Sans CJK JP など)があるとそちらに置き換わって
+    細く描画されてしまうので、**固有名のほうを使う**。
     """
+    return _read_font_names(path)
+
+
+def font_family_from_file(path: Path) -> str:
+    """フォントの識別に使う名前(ウェイト固有名を優先)。読めなければ空文字。"""
+    specific, generic = _read_font_names(path)
+    return specific or generic
+
+
+def _read_font_names(path: Path) -> tuple:
+    """name テーブルから (nameID 1, nameID 16) を読む。Windows(platform 3)優先。"""
     try:
         with open(path, "rb") as f:
             tag = f.read(4)
@@ -511,23 +523,23 @@ def font_family_from_file(path: Path) -> str:
                 f.seek(struct.unpack(">I", f.read(4))[0])
                 f.read(4)
             elif tag not in (b"\x00\x01\x00\x00", b"OTTO", b"true"):
-                return ""
+                return "", ""
             num_tables = struct.unpack(">H", f.read(2))[0]
             f.read(6)
             name_off = name_len = 0
             for _ in range(num_tables):
                 rec = f.read(16)
                 if len(rec) < 16:
-                    return ""
+                    return "", ""
                 if rec[:4] == b"name":
                     name_off, name_len = struct.unpack(">II", rec[8:16])
                     break
             if not name_len:
-                return ""
+                return "", ""
             f.seek(name_off)
             fmt, count, str_off = struct.unpack(">HHH", f.read(6))
             records = [struct.unpack(">HHHHHH", f.read(12)) for _ in range(count)]
-            best = {}
+            best = {1: {}, 16: {}}
             for platform, encoding, _lang, name_id, length, offset in records:
                 if name_id not in (1, 16):
                     continue
@@ -541,13 +553,12 @@ def font_family_from_file(path: Path) -> str:
                 value = value.strip()
                 if not value:
                     continue
-                # 優先度: nameID16 > 1、platform 3 > その他
-                score = (2 if name_id == 16 else 1) * 2 + (1 if platform == 3 else 0)
-                if score > best.get("score", -1):
-                    best = {"score": score, "value": value}
-            return best.get("value", "")
+                score = 1 if platform == 3 else 0   # Windows名を優先
+                if score > best[name_id].get("score", -1):
+                    best[name_id] = {"score": score, "value": value}
+            return best[1].get("value", ""), best[16].get("value", "")
     except (OSError, struct.error, ValueError):
-        return ""
+        return "", ""
 
 
 def font_weight_from_file(path: Path) -> int:
@@ -576,17 +587,25 @@ def font_weight_from_file(path: Path) -> int:
     return 0
 
 
-def dropin_font_files(fonts_dir: Path = FONTS_DIR) -> dict:
-    """assets/fonts のフォントを {小文字ファミリ名: ファイルパス} で返す。"""
-    found = {}
+def _iter_dropin(fonts_dir: Path):
+    """assets/fonts のフォントを (パス, 固有名, 総称名) で列挙する。"""
     if not fonts_dir.is_dir():
-        return found
+        return
     for path in sorted(fonts_dir.iterdir()):
         if path.suffix.lower() not in (".ttf", ".otf", ".ttc", ".otc"):
             continue
-        family = font_family_from_file(path)
-        if family:
-            found.setdefault(family.lower(), path)
+        specific, generic = font_names_from_file(path)
+        if specific or generic:
+            yield path, specific or generic, generic
+
+
+def dropin_font_files(fonts_dir: Path = FONTS_DIR) -> dict:
+    """assets/fonts のフォントを {小文字の名前: ファイルパス} で返す(別名も登録)。"""
+    found = {}
+    for path, specific, generic in _iter_dropin(fonts_dir):
+        for alias in (specific, generic):
+            if alias:
+                found.setdefault(alias.lower(), path)
     return found
 
 
@@ -597,16 +616,17 @@ def font_is_already_bold(family: str) -> bool:
 
 
 def dropin_fonts(fonts_dir: Path = FONTS_DIR) -> dict:
-    """assets/fonts に置かれたフォントの {小文字ファミリ名: 表示用ファミリ名}。"""
+    """置かれたフォントの {指定に使える名前(小文字): 実際に指定すべき固有名}。
+
+    総称名(「Noto Sans JP」)でも引けるようにしつつ、返す値は必ず固有名
+    (「Noto Sans JP Black」)にする。総称名のまま libass に渡すと、
+    システムの同系統フォントに置き換わって細く描画されることがあるため。
+    """
     found = {}
-    if not fonts_dir.is_dir():
-        return found
-    for path in sorted(fonts_dir.iterdir()):
-        if path.suffix.lower() not in (".ttf", ".otf", ".ttc", ".otc"):
-            continue
-        family = font_family_from_file(path)
-        if family:
-            found.setdefault(family.lower(), family)
+    for _path, specific, generic in _iter_dropin(fonts_dir):
+        for alias in (specific, generic):
+            if alias:
+                found.setdefault(alias.lower(), specific)
     return found
 
 
@@ -652,10 +672,13 @@ def resolve_font_from(candidates: list, quiet: bool = False) -> str:
     candidates = [c for c in (candidates or []) if c]
     if not candidates:
         return ""
-    available = dropin_fonts()
-    available.update({n: n for n in installed_font_families()})
+    dropin = dropin_fonts()
+    installed = installed_font_families()
     for name in candidates:
-        if name.lower() in available:
+        key = name.lower()
+        if key in dropin:
+            return dropin[key]   # 同梱フォントは必ず固有名で指定する
+        if key in installed:
             return name
     if not quiet:
         print(f"[warn] テロップ用フォントが見つかりませんでした。{candidates[0]} を指定して"
