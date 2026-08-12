@@ -2,10 +2,10 @@
 # 使い方は docs/06_auto_edit.md 参照。数値を変えたら render だけやり直せば反映される。
 
 # テロップの様式。ファイル末尾の presets: で中身を上書きしている
+#   talk     … 年収チャンネル系 (対談向け。話者ごとの座布団・2〜3フレームの詰めカット)
 #   business … マコなり社長系 (座布団なし・白文字に紺の太い縁取り・キーワード色替え)
-#   talk     … 年収チャンネル系 (対談向け。座布団を話者ごとに色分け・詰めたカット)
 #   news     … ニュース番組風 (画面下の帯 + 金のライン)
-preset: business
+preset: talk
 
 jetcut:
   silence_threshold_db: -35   # これより小さい音を「無音」とみなす (声が切れるなら -40 へ)
@@ -62,10 +62,17 @@ emphasis:                     # キーワードだけ色を変える (ビジネ�
   keywords: []                # 常に強調したい語。例: ["圧倒的", "結論"]
   # 文字起こしSRTを手直しするとき *この書き方* で囲んだ部分も強調される
 
-speakers: {}                  # 対談向け: 話者ごとの色。SRTに「名前: 発言」と書くと効く
+punch:                        # ツッコミ・ボケ用。SRTの行頭に「!」を付けると適用される
+  enabled: true
+  scale: 1.22                 # 文字と座布団を拡大する倍率
+  color: ""                   # 空なら通常の文字色のまま
+  outline_color: ""
+  font_candidates: []         # 別フォントに切り替えたいときだけ書く(無ければ通常フォント)
+
+speakers: {}                  # 対談向け: 話者ごとの座布団色。SRTに「名前: 発言」と書く
   # 例)
-  #   株本: "FFD34D"
-  #   ゲスト: "7FD4FF"
+  #   株本: "C9A227"
+  #   ゲスト: "1F5F8B"
 
 band:                         # テロップの下地 (座布団 / テロップベース)
   enabled: true
@@ -76,7 +83,10 @@ band:                         # テロップの下地 (座布団 / テロップ�
   full_bleed: true            # 画面下端まで帯を伸ばす (中途半端な浮きを防ぐ)
   bottom_margin_ratio: 0.0    # full_bleed=false のときの下端からの距離 / 画面高さ
   padding_em: 0.52            # 帯の内側の上下余白 (放送の目安は文字サイズの50〜70%)
+  padding_x_em: 0.78          # 帯の内側の左右余白 (fit_width のときに効く)
   fit_content: true           # 帯の高さを行数に合わせる (1行のとき余白が空きすぎない)
+  fit_width: false            # true=文字の幅に合わせた「座布団」 / false=全幅の帯
+  corner_radius_em: 0.0       # 座布団の角丸 (文字サイズ比)
   accent_color: "E8B54D"      # 帯の上辺のアクセントライン (金色)
   accent_em: 0.075            # アクセントラインの太さ (文字サイズ比)
 
@@ -138,33 +148,61 @@ presets:
       enabled: true
       color: "FFE14D"
 
-  # 年収チャンネル系。対談向けで、座布団の色で誰の発言か分かるようにする。
-  # 発声と発声の間は2〜3フレームまで詰めるのが特徴。
+  # 年収チャンネル系（対談・インタビュー）。制作元が公開している編集方針に合わせている:
+  #   ・発声と発声の間は常に2〜3フレーム
+  #   ・座布団のイメージカラーで誰の発言か分かるようにする
+  #   ・ツッコミ/ボケは拡大しつつフォントを変える
+  #   ・落ち着いた雰囲気を崩さない（過度なエフェクトを足さない）
+  # ※フォント名・文字サイズ・カラーコードは公開されていないため、
+  #   上の方針と対談動画の一般則から決めている（詳細は docs/06）
   talk:
     jetcut:
-      min_silence: 0.2
-      keep_padding_frames: 1.5  # 前後1.5フレーム → 発話間は約3フレーム
-      join_gap: 0.1
+      # 発話の前後に1.5フレームずつ残す → つなぎ目の無音はちょうど3フレーム
+      keep_padding_frames: 1.5
+      min_silence: 0.15       # 短い間も対象にして詰める
+      join_gap: 0.06          # 2フレーム以下の間は切らずにつなぐ
       min_keep: 0.25
     telop:
-      max_chars_per_line: 18
+      max_chars_per_line: 16  # 全発言をテロップ化する前提で1行を短めに
       max_lines: 2
-      min_duration: 0.8
+      min_duration: 0.7       # テンポが速いので短い表示も許す
+      reading_speed: 5.0
     style:
-      font_size_ratio: 0.062
-      outline_color: "1A1A1A"
-      outline_em: 0.07
-      shadow_em: 0.05
-    band:
+      font_candidates:
+        - Source Han Sans JP Heavy   # 源ノ角ゴシック Heavy
+        - Noto Sans JP Black         # 同設計の無料版
+        - Noto Sans CJK JP Black
+        - BIZ UDPGothic
+        - Meiryo
+      font_size_ratio: 0.058  # 座布団に載せる前提。全画面テロップより控えめ
+      text_color: "FFFFFF"
+      outline_color: "10161C" # 座布団があるので縁は細く暗く
+      outline_em: 0.045
+      shadow_em: 0.035
+      shadow_opacity: 0.4
+      tracking_em: -0.02
+    band:                     # テキスト幅に合わせた角丸の「座布団」
       enabled: true
-      color: "1F2933"         # speakers: を設定すると話者ごとの色で上書きされる
-      opacity: 0.88
-      gradient: 0.0
-      accent_em: 0.0
+      color: "232B36"         # speakers: を設定すると話者ごとの色に置き換わる
+      opacity: 0.9
+      gradient: 0.0           # 単色（グラデーションは足さない）
+      accent_em: 0.0          # アクセントラインなし
+      full_bleed: false
+      bottom_margin_ratio: 0.055
       fit_content: true
+      fit_width: true
+      corner_radius_em: 0.14
     emphasis:
       enabled: true
-      color: "FFE14D"
+      color: "FFD34D"         # 年収・金額など数字を目立たせる
+      auto_numbers: true
+    punch:
+      enabled: true
+      scale: 1.22
+    speakers:                 # 名前は自分の動画に合わせて書き換える
+      # 白文字を載せるので、座布団の色は暗め(明るいと文字が沈む)
+      株本: "6B4E0F"          # 進行役: 深い金
+      ゲスト: "12405F"        # ゲスト: 深い青
 
   # ニュース番組風 (このファイルの既定値そのまま)
   news: {}

@@ -52,6 +52,7 @@ class TelopEvent:
     end: float
     text: str
     speaker: str = ""
+    punch: bool = False   # ツッコミ・ボケ用 (拡大 + フォント切替)
 
 
 # ---------------------------------------------------------------- 純ロジック
@@ -134,7 +135,7 @@ def remap_events(events: list, keeps: list, min_duration: float,
         ns, ne = remap_time(ev.start, keeps), remap_time(ev.end, keeps)
         if ne - ns < 0.05:  # 丸ごとカットされた字幕は捨てる
             continue
-        out.append(TelopEvent(ns, ne, ev.text, ev.speaker))
+        out.append(TelopEvent(ns, ne, ev.text, ev.speaker, ev.punch))
     total = output_duration(keeps)
     for i, ev in enumerate(out):
         limit = out[i + 1].start if i + 1 < len(out) else total
@@ -255,6 +256,7 @@ def wrap_lines(text: str, max_chars: float) -> list:
 
 
 SPEAKER_RE = re.compile(r"^\s*([^\s:：]{1,12})\s*[:：]\s*(.+)$", re.DOTALL)
+PUNCH_PREFIX = re.compile(r"^\s*[!！]\s*")
 EMPHASIS_MARK = re.compile(r"\*([^*]+)\*")
 # ビジネス系YouTubeは数字を強調するのが定番。単位が付いていれば一緒に拾う
 NUMBER_RE = re.compile(
@@ -269,6 +271,16 @@ def split_speaker(text: str, speakers: dict) -> tuple:
     if m and speakers and m.group(1) in speakers:
         return m.group(1), m.group(2).strip()
     return "", text
+
+
+def prepare_event(event: TelopEvent, cfg: dict) -> TelopEvent:
+    """SRTの1行から話者(「名前:」)とツッコミ指定(行頭の「!」)を取り出す。"""
+    name, body = split_speaker(event.text, cfg.get("speakers") or {})
+    punch = bool(PUNCH_PREFIX.match(body))
+    if punch:
+        body = PUNCH_PREFIX.sub("", body)
+    return TelopEvent(event.start, event.end, body,
+                      name or event.speaker, punch or event.punch)
 
 
 def _merge_spans(spans: list) -> list:
@@ -343,7 +355,7 @@ def split_telop(event: TelopEvent, max_chars: float, max_lines: int,
         if strip_period:
             text = re.sub(r"[。]+$", "", text)
         end = t + span * (w / total_w)
-        out.append(TelopEvent(t, end, text, event.speaker))
+        out.append(TelopEvent(t, end, text, event.speaker, event.punch))
         t = end
     out[-1].end = event.end  # 丸め誤差で縮まないように
     return out
@@ -391,6 +403,32 @@ def ass_color(rgb_hex: str, opacity: float = 1.0) -> str:
     r, g, b = rgb[0:2], rgb[2:4], rgb[4:6]
     alpha = max(0, min(255, int(round((1.0 - opacity) * 255))))
     return f"&H{alpha:02X}{b}{g}{r}".upper()
+
+
+def relative_luminance(rgb_hex: str) -> float:
+    """sRGBの相対輝度(0=黒, 1=白)。座布団に白文字を載せられるかの判定に使う。"""
+    rgb = rgb_hex.lstrip("#")
+    out = []
+    for i in (0, 2, 4):
+        c = int(rgb[i:i + 2], 16) / 255.0
+        out.append(c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4)
+    return 0.2126 * out[0] + 0.7152 * out[1] + 0.0722 * out[2]
+
+
+def warn_light_bands(cfg: dict) -> list:
+    """白文字が沈むほど明るい座布団色を洗い出す(警告用)。"""
+    if not (cfg.get("band") or {}).get("enabled"):
+        return []
+    colors = {"band.color": cfg["band"]["color"]}
+    colors.update({f"speakers.{k}": v for k, v in (cfg.get("speakers") or {}).items()})
+    light = []
+    for name, value in colors.items():
+        try:
+            if relative_luminance(value) > 0.35:
+                light.append(f"{name}={value}")
+        except (ValueError, IndexError):
+            continue
+    return light
 
 
 def ass_escape(text: str) -> str:
@@ -506,15 +544,11 @@ def installed_font_families() -> set:
     return names
 
 
-def resolve_font(cfg: dict, quiet: bool = False) -> str:
-    """設定の font / font_candidates から実際に使えるフォント名を決める。"""
-    st = cfg["style"]
-    configured = (st.get("font") or "auto").strip()
-    candidates = ([configured] if configured.lower() != "auto"
-                  else list(st.get("font_candidates") or []))
+def resolve_font_from(candidates: list, quiet: bool = False) -> str:
+    """候補のうちPCに実在する最初のフォント名を返す。無ければ先頭候補。"""
+    candidates = [c for c in (candidates or []) if c]
     if not candidates:
-        candidates = ["Noto Sans JP Black"]
-
+        return ""
     available = dropin_fonts()
     available.update({n: n for n in installed_font_families()})
     for name in candidates:
@@ -527,10 +561,49 @@ def resolve_font(cfg: dict, quiet: bool = False) -> str:
     return candidates[0]
 
 
+def resolve_font(cfg: dict, quiet: bool = False) -> str:
+    """設定の font / font_candidates から実際に使えるフォント名を決める。"""
+    st = cfg["style"]
+    configured = (st.get("font") or "auto").strip()
+    candidates = ([configured] if configured.lower() != "auto"
+                  else list(st.get("font_candidates") or []))
+    return resolve_font_from(candidates or ["Noto Sans JP Black"], quiet)
+
+
 # ---------------------------------------------------------------- ASS字幕生成
 
 def _rect(x0: float, y0: float, x1: float, y1: float) -> str:
     return f"m {x0:.0f} {y0:.0f} l {x1:.0f} {y0:.0f} {x1:.0f} {y1:.0f} {x0:.0f} {y1:.0f}"
+
+
+def _round_rect(x0: float, y0: float, x1: float, y1: float, r: float) -> str:
+    """角丸の矩形。円弧は3次ベジェで近似する(係数はASSの描画コマンド用)。"""
+    r = max(0.0, min(r, (x1 - x0) / 2, (y1 - y0) / 2))
+    if r < 1.0:
+        return _rect(x0, y0, x1, y1)
+    k = r * 0.5523  # 円をベジェで近似するときの定数
+    return (f"m {x0 + r:.0f} {y0:.0f} l {x1 - r:.0f} {y0:.0f} "
+            f"b {x1 - r + k:.0f} {y0:.0f} {x1:.0f} {y0 + r - k:.0f} {x1:.0f} {y0 + r:.0f} "
+            f"l {x1:.0f} {y1 - r:.0f} "
+            f"b {x1:.0f} {y1 - r + k:.0f} {x1 - r + k:.0f} {y1:.0f} {x1 - r:.0f} {y1:.0f} "
+            f"l {x0 + r:.0f} {y1:.0f} "
+            f"b {x0 + r - k:.0f} {y1:.0f} {x0:.0f} {y1 - r + k:.0f} {x0:.0f} {y1 - r:.0f} "
+            f"l {x0:.0f} {y0 + r:.0f} "
+            f"b {x0:.0f} {y0 + r - k:.0f} {x0 + r - k:.0f} {y0:.0f} {x0 + r:.0f} {y0:.0f}")
+
+
+def estimate_text_width(text: str, font_size: float, spacing: float) -> float:
+    """行の表示幅(px)を概算する。座布団をテキスト幅に合わせるのに使う。
+
+    日本語フォントは全角がちょうど1em幅で作られているので、
+    display_width(全角=1) × 文字サイズ でかなり正確に見積もれる。
+    """
+    widest = 0.0
+    for line in text.split("\\N"):
+        chars = len(line.replace("*", ""))
+        widest = max(widest,
+                     display_width(line) * font_size + spacing * max(0, chars - 1))
+    return widest
 
 
 def _alpha_tag(opacity: float) -> str:
@@ -562,6 +635,7 @@ def build_ass(events: list, cfg: dict, width: int, height: int,
     max_lines = cfg["telop"]["max_lines"]
     line_h = fs * st["line_height_em"]
     pad = bd["padding_em"] * fs
+    pad_x = bd.get("padding_x_em", bd["padding_em"] * 1.5) * fs
     accent_h = bd["accent_em"] * fs
     y_bottom = (height if bd["full_bleed"]
                 else height - bd["bottom_margin_ratio"] * height)
@@ -569,12 +643,18 @@ def build_ass(events: list, cfg: dict, width: int, height: int,
     title_pad = round(title_fs * 0.42, 1)
     title_margin = tl["margin_ratio"] * height
 
-    def band_top(n_lines: int) -> float:
-        return y_bottom - (n_lines * line_h + 2 * pad)
+    def band_top(n_lines: int, scale: float = 1.0) -> float:
+        return y_bottom - (n_lines * line_h + 2 * pad) * scale
 
     text_color = ass_color(st["text_color"])
     outer = ass_color(st["double_outline_color"])
     shadow_color = ass_color("000000", st.get("shadow_opacity", 0.45))
+    # ツッコミ・ボケ用: 文字を拡大し、あれば別フォントに切り替える
+    pc = cfg.get("punch") or {}
+    punch_scale = float(pc.get("scale") or 1.0) if pc.get("enabled") else 1.0
+    punch_fs = max(10, round(fs * punch_scale))
+    punch_font = (resolve_font_from(pc.get("font_candidates"), quiet=True) or font
+                  if pc.get("enabled") else font)
     header = f"""[Script Info]
 ; auto_edit.py generated (news-style telop)
 ScriptType: v4.00+
@@ -589,6 +669,7 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
 Style: Telop,{font},{fs},{text_color},{text_color},{ass_color(st['outline_color'])},{shadow_color},{bold},0,0,0,100,100,{spacing},0,1,{outline},{shadow},5,0,0,0,1
 Style: TelopEdge,{font},{fs},{outer},{outer},{outer},&H00000000,{bold},0,0,0,100,100,{spacing},0,1,{round(outline * 2.6, 1)},0,5,0,0,0,1
 Style: Shape,{font},{fs},&H00FFFFFF,&H00FFFFFF,&H00FFFFFF,&H00000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1
+Style: Punch,{punch_font},{punch_fs},{ass_color(pc.get('color') or st['text_color'])},{ass_color(pc.get('color') or st['text_color'])},{ass_color(pc.get('outline_color') or st['outline_color'])},{shadow_color},{bold},0,0,0,100,100,{round(spacing * punch_scale, 1)},0,1,{round(outline * punch_scale, 1)},{round(shadow * punch_scale, 1)},5,0,0,0,1
 Style: Title,{font},{title_fs},{ass_color(tl['text_color'])},{ass_color(tl['text_color'])},{ass_color(tl['bg_color'], tl['bg_opacity'])},{ass_color(tl['bg_color'], tl['bg_opacity'])},{bold},0,0,0,100,100,{spacing},0,3,{title_pad},0,7,0,0,0,1
 
 [Events]
@@ -642,26 +723,39 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         s, e = ass_time(ev.start), ass_time(ev.end)
         n_lines = min(max_lines, ev.text.count("\\N") + 1) if bd.get("fit_content") \
             else max_lines
-        y_top = band_top(n_lines)
+        y_top = band_top(n_lines, punch_scale if ev.punch else 1.0)
         band_color = speakers.get(ev.speaker) or bd["color"]
 
         if bd["enabled"]:
-            # 帯: 上ほどわずかに透けるグラデーション。矩形を「下端まで」重ねて
-            # 不透明度を積み上げる(隣接矩形を並べると継ぎ目に縞が出るため)。
-            # 既存の不透明度Oに追加分aを重ねるとO+a(1-O)になるので、そこから逆算する。
-            prev = 0.0
-            for i in range(steps):
-                ratio = i / max(1, steps - 1) if steps > 1 else 1.0
-                target = bd["opacity"] * (1.0 - bd["gradient"] * (1.0 - ratio))
-                add = 1.0 if prev >= 1.0 else (target - prev) / (1.0 - prev)
-                prev = target
-                if add <= 0.001:
-                    continue
-                y = y_top + (y_bottom - y_top) * i / steps
-                shape(0, s, e, band_color, add, _rect(0, y, width, y_bottom))
+            # 座布団の左右: 全幅か、テキスト幅に合わせるか
+            if bd.get("fit_width"):
+                ev_fs = fs * (punch_scale if ev.punch else 1.0)
+                half = estimate_text_width(ev.text, ev_fs, spacing) / 2 + pad_x
+                x0, x1 = max(0.0, width / 2 - half), min(float(width), width / 2 + half)
+            else:
+                x0, x1 = 0.0, float(width)
+            radius = bd.get("corner_radius_em", 0) * fs
+
+            if bd["gradient"] > 0:
+                # 上ほどわずかに透けるグラデーション。矩形を「下端まで」重ねて
+                # 不透明度を積み上げる(隣接矩形を並べると継ぎ目に縞が出るため)。
+                # 既存の不透明度Oに追加分aを重ねるとO+a(1-O)になるので逆算する。
+                prev = 0.0
+                for i in range(steps):
+                    ratio = i / max(1, steps - 1) if steps > 1 else 1.0
+                    target = bd["opacity"] * (1.0 - bd["gradient"] * (1.0 - ratio))
+                    add = 1.0 if prev >= 1.0 else (target - prev) / (1.0 - prev)
+                    prev = target
+                    if add <= 0.001:
+                        continue
+                    y = y_top + (y_bottom - y_top) * i / steps
+                    shape(0, s, e, band_color, add, _rect(x0, y, x1, y_bottom))
+            else:
+                shape(0, s, e, band_color, bd["opacity"],
+                      _round_rect(x0, y_top, x1, y_bottom, radius))
             if accent_h >= 1:
                 shape(1, s, e, bd["accent_color"], 1.0,
-                      _rect(0, y_top - accent_h, width, y_top))
+                      _rect(x0, y_top - accent_h, x1, y_top))
 
         body = body_of(ev)
         if bd["enabled"]:  # 座布団の中央に置く
@@ -671,10 +765,11 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         cx = width / 2
         common = (f"\\an{align}\\pos({cx:.0f},{cy:.0f})\\q2"
                   + (f"\\blur{blur}" if blur else ""))
+        style = "Punch" if (ev.punch and punch_scale != 1.0) else "Telop"
         # 帯なしで映像に直接乗せる場合の可読性確保として二重縁取りを選べる
         if st.get("double_outline"):
             lines.append(f"Dialogue: 2,{s},{e},TelopEdge,,0,0,0,,{{{common}}}{body}")
-        lines.append(f"Dialogue: 3,{s},{e},Telop,,0,0,0,,{{{common}}}{body}")
+        lines.append(f"Dialogue: 3,{s},{e},{style},,0,0,0,,{{{common}}}{body}")
     return "\n".join(lines) + "\n"
 
 
@@ -844,13 +939,10 @@ def transcribe(input_path: Path, cfg: dict) -> list:
 
 def make_telop_events(raw_events: list, plan: dict, cfg: dict) -> list:
     tc = cfg["telop"]
-    speakers = cfg.get("speakers") or {}
     keeps = [tuple(seg) for seg in plan["keep_segments"]]
     split = []
     for ev in raw_events:
-        # 「名前: 発言」形式なら話者を取り出す(座布団の色分けに使う)
-        name, body = split_speaker(ev.text, speakers)
-        ev = TelopEvent(ev.start, ev.end, body, name or ev.speaker)
+        ev = prepare_event(ev, cfg)  # 「名前:」で話者、行頭「!」でツッコミ扱い
         split.extend(split_telop(ev, tc["max_chars_per_line"], tc["max_lines"],
                                  tc["strip_trailing_period"]))
     return remap_events(split, keeps, tc["min_duration"],
@@ -873,6 +965,9 @@ def render(input_path: Path, plan: dict, events: list, cfg: dict,
     if events or title_text:
         font = resolve_font(cfg)
         print(f"  テロップのフォント: {font}")
+        for light in warn_light_bands(cfg):
+            print(f"[warn] 座布団の色が明るすぎて白文字が沈みます: {light}",
+                  file=sys.stderr)
         ass_name = "telop.ass"
         (workdir / ass_name).write_text(
             build_ass(events, cfg, plan["width"], plan["height"], total,
@@ -986,13 +1081,14 @@ def cmd_preview(args) -> int:
     tc = cfg["telop"]
     raw = args.text or SAMPLE_TELOP
     # 本番と同じ折り返し・話者判定を通す(プレビューと仕上がりを一致させる)
-    name, body = split_speaker(raw, cfg.get("speakers") or {})
-    events = split_telop(TelopEvent(0.0, 5.0, body, name),
-                         tc["max_chars_per_line"], tc["max_lines"],
+    prepared = prepare_event(TelopEvent(0.0, 5.0, raw), cfg)
+    events = split_telop(prepared, tc["max_chars_per_line"], tc["max_lines"],
                          tc["strip_trailing_period"]) or [TelopEvent(0.0, 5.0, raw)]
     title = args.title if args.title is not None else cfg["title"]["text"]
     font = resolve_font(cfg)
     print(f"  テロップのフォント: {font}  /  preset: {cfg.get('preset') or '(なし)'}")
+    for light in warn_light_bands(cfg):
+        print(f"[warn] 座布団の色が明るすぎて白文字が沈みます: {light}", file=sys.stderr)
     ass = wd / "_preview.ass"
     ass.write_text(build_ass([events[0]], cfg, width, height,
                              5.0, title, font=font), encoding="utf-8")

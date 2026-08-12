@@ -238,6 +238,79 @@ def test_presets():
           "座布団ありで中央揃えになっていない")
 
 
+def test_talk_preset():
+    """年収チャンネル系: 話者色分けの座布団・テキスト幅に合わせた角丸・詰めたカット。"""
+    talk = auto_edit.load_config(auto_edit.DEFAULT_CONFIG, "talk")
+    check(talk["band"]["fit_width"] is True, "talk の座布団が文字幅に追従しない")
+    check(talk["band"]["corner_radius_em"] > 0, "talk の座布団が角丸でない")
+    check(talk["band"]["gradient"] == 0, "talk の座布団にグラデーションが入っている")
+    check(talk["jetcut"]["keep_padding_frames"] == 1.5,
+          "talk のカット余白がフレーム指定になっていない")
+    # 発話の前後に1.5フレームずつ残す。カット後はその2つが隣り合うので、
+    # つなぎ目に残る無音はちょうど3フレームになる(消える区間の長さではない)
+    pad = talk["jetcut"]["keep_padding_frames"] / 30.0
+    keeps = auto_edit.build_keep_segments(
+        [(2.0, 4.0)], 6.0, pad, talk["jetcut"]["join_gap"], talk["jetcut"]["min_keep"])
+    kept_silence = (keeps[0][1] - 2.0) + (4.0 - keeps[1][0])
+    check(abs(kept_silence * 30 - 3.0) < 0.01,
+          f"つなぎ目に残る無音が3フレームでない: {kept_silence * 30:.2f}f")
+    # join_gap は2フレーム以下 (これより大きいと3フレームの間まで結合されてしまう)
+    check(talk["jetcut"]["join_gap"] < 3 / 30.0,
+          "join_gap が大きすぎて狙った間隔でカットされない")
+
+    # 白文字を載せるので座布団の色は暗いこと
+    for name, color in talk["speakers"].items():
+        check(auto_edit.relative_luminance(color) < 0.35,
+              f"話者 {name} の座布団が明るすぎる: {color}")
+    check(auto_edit.warn_light_bands(talk) == [], "既定色で明るさ警告が出ている")
+    bright = dict(talk, speakers={"誰か": "FFEE88"})
+    check(auto_edit.warn_light_bands(bright), "明るい座布団色を検出できていない")
+
+    # 座布団が文字幅に追従する (短い文ほど狭い)
+    def band_width(text):
+        ass = auto_edit.build_ass([TelopEvent(0, 2, text, "株本")], talk,
+                                  1920, 1080, 5.0, font="F")
+        xs = [int(v) for v in re.findall(r"\\p1\\pos\(0,0\)[^}]*}m (\d+) ", ass)]
+        return 1920 - 2 * min(xs)
+    check(band_width("短い") < band_width("こちらはずっと長い発言になります"),
+          "座布団の幅が文字数に追従していない")
+
+
+def test_punch_telop():
+    """行頭の「!」でツッコミ扱い: 文字を拡大し専用スタイルで描く。"""
+    cfg = auto_edit.load_config(auto_edit.DEFAULT_CONFIG, "talk")
+    ev = auto_edit.prepare_event(TelopEvent(0, 2, "株本: !それ盛ってませんか"), cfg)
+    check(ev.speaker == "株本" and ev.punch and ev.text == "それ盛ってませんか",
+          f"ツッコミ指定の解釈が想定外: {ev}")
+    check(auto_edit.prepare_event(TelopEvent(0, 2, "普通の発言"), cfg).punch is False,
+          "「!」が無いのにツッコミ扱いになっている")
+
+    ass = auto_edit.build_ass([ev], cfg, 1920, 1080, 5.0, font="F")
+    check(",Punch,," in ass, "ツッコミ用スタイルで描かれていない")
+
+    def size(text, style):
+        line = [l for l in text.splitlines() if l.startswith(f"Style: {style},")][0]
+        return float(line.split(",")[2])
+    check(size(ass, "Punch") > size(ass, "Telop"), "ツッコミで文字が拡大されていない")
+    # 拡大しない設定なら通常スタイルに戻る
+    cfg["punch"]["enabled"] = False
+    plain = auto_edit.build_ass([ev], cfg, 1920, 1080, 5.0, font="F")
+    check(",Punch,," not in plain, "punch無効でもツッコミスタイルが使われている")
+
+
+def test_round_rect():
+    """角丸の描画コマンドが閉じた図形になっている。"""
+    path = auto_edit._round_rect(100, 200, 500, 300, 20)
+    check(path.startswith("m ") and " b " in path, f"ベジェが使われていない: {path}")
+    nums = [int(n) for n in re.findall(r"-?\d+", path)]
+    xs, ys = nums[0::2], nums[1::2]
+    check(min(xs) == 100 and max(xs) == 500, f"横の範囲が想定外: {min(xs)}〜{max(xs)}")
+    check(min(ys) == 200 and max(ys) == 300, f"縦の範囲が想定外: {min(ys)}〜{max(ys)}")
+    # 半径0なら普通の矩形にフォールバック
+    check(auto_edit._round_rect(0, 0, 10, 10, 0) == auto_edit._rect(0, 0, 10, 10),
+          "半径0で矩形に戻らない")
+
+
 def test_emphasis():
     """キーワード・数字・*囲み* が強調色になる。"""
     cfg = {"emphasis": {"enabled": True, "color": "FFE14D",
@@ -284,7 +357,12 @@ def test_speaker_band():
     cfg["speakers"] = speakers
     ass = auto_edit.build_ass([TelopEvent(0, 2, "はい", "株本")], cfg,
                               1920, 1080, 5.0, font="F")
-    check(auto_edit.ass_color("FFD34D") in ass, "話者色が座布団に反映されていない")
+    check(f"\\1c{auto_edit.ass_color('FFD34D')}" in ass,
+          "話者色が座布団に反映されていない")
+    other = auto_edit.build_ass([TelopEvent(0, 2, "はい", "ゲスト")], cfg,
+                                1920, 1080, 5.0, font="F")
+    check(f"\\1c{auto_edit.ass_color('7FD4FF')}" in other,
+          "話者ごとに座布団の色が変わっていない")
 
 
 def test_no_break_inside_number():
@@ -421,6 +499,9 @@ def main() -> int:
     test_ass_gradient_band()
     test_reading_speed()
     test_presets()
+    test_talk_preset()
+    test_punch_telop()
+    test_round_rect()
     test_emphasis()
     test_speaker_band()
     test_no_break_inside_number()
