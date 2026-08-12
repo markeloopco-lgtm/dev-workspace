@@ -288,26 +288,74 @@ def test_talk_preset():
     check(auto_edit.warn_light_bands(bright), "明るい座布団色を検出できていない")
 
 
-def test_punch_telop():
-    """行頭の「!」でツッコミ扱い: 文字を拡大し専用スタイルで描く。"""
+def fs_of(ass_text):
+    """本文Dialogueに乗った \\fs の値(無ければStyleの値)を返す。"""
+    body = [l for l in ass_text.splitlines() if l.startswith("Dialogue: 3,")][0]
+    m = re.search(r"\\fs([0-9.]+)", body)
+    if m:
+        return float(m.group(1))
+    style = [l for l in ass_text.splitlines() if l.startswith("Style: Telop,")][0]
+    return float(style.split(",")[2])
+
+
+def test_scenes():
+    """行頭の記号でシーンを切り替え、フォント・大きさ・色を差し替える。"""
     cfg = auto_edit.load_config(auto_edit.DEFAULT_CONFIG, "talk")
     ev = auto_edit.prepare_event(TelopEvent(0, 2, "株本: !それ盛ってませんか"), cfg)
-    check(ev.speaker == "株本" and ev.punch and ev.text == "それ盛ってませんか",
-          f"ツッコミ指定の解釈が想定外: {ev}")
-    check(auto_edit.prepare_event(TelopEvent(0, 2, "普通の発言"), cfg).punch is False,
-          "「!」が無いのにツッコミ扱いになっている")
+    check(ev.speaker == "株本" and ev.scene == "punch"
+          and ev.text == "それ盛ってませんか", f"シーン指定の解釈が想定外: {ev}")
+    check(auto_edit.prepare_event(TelopEvent(0, 2, "#結論はこれです"), cfg).scene
+          == "point", "「#」で要点シーンにならない")
+    check(auto_edit.prepare_event(TelopEvent(0, 2, "普通の発言"), cfg).scene == "",
+          "記号が無いのにシーン扱いになっている")
+    # 文末が「？」の行は自動で質問シーンになる
+    check(auto_edit.prepare_event(TelopEvent(0, 2, "いくらでした？"), cfg).scene
+          == "question", "質問の自動判定が効いていない")
 
-    ass = auto_edit.build_ass([ev], cfg, 1920, 1080, 5.0, font="F")
-    check(",Punch,," in ass, "ツッコミ用スタイルで描かれていない")
+    # 拡大され、シーン専用フォントに切り替わる
+    normal = auto_edit.build_ass([TelopEvent(0, 2, "それ盛ってませんか")], cfg,
+                                 1920, 1080, 5.0, font="F")
+    punch = auto_edit.build_ass([ev], cfg, 1920, 1080, 5.0, font="F")
+    check(fs_of(punch) > fs_of(normal), "ツッコミで文字が拡大されていない")
+    want = auto_edit.resolve_font_from(
+        cfg["scenes"]["punch"]["font_candidates"], quiet=True)
+    if want and want != "F":
+        check(f"\\fn{want}" in punch, f"シーンのフォント切替が出ていない: {want}")
 
-    def size(text, style):
-        line = [l for l in text.splitlines() if l.startswith(f"Style: {style},")][0]
-        return float(line.split(",")[2])
-    check(size(ass, "Punch") > size(ass, "Telop"), "ツッコミで文字が拡大されていない")
-    # 拡大しない設定なら通常スタイルに戻る
-    cfg["punch"]["enabled"] = False
-    plain = auto_edit.build_ass([ev], cfg, 1920, 1080, 5.0, font="F")
-    check(",Punch,," not in plain, "punch無効でもツッコミスタイルが使われている")
+    # シーン定義が無ければ通常表示のまま
+    bare = copy.deepcopy(cfg)
+    bare["scenes"] = {}
+    check("\\fn" not in auto_edit.build_ass(
+        [TelopEvent(0, 2, "ふつう")], bare, 1920, 1080, 5.0, font="F"),
+        "シーン未定義なのにフォント切替が出ている")
+
+
+def test_wrapped_font_size():
+    """1行と2行で文字サイズを切り替え、はみ出す長さは自動で縮める。"""
+    cfg = auto_edit.load_config(auto_edit.DEFAULT_CONFIG, "talk")
+    st = cfg["style"]
+    check(st["font_size_ratio_wrapped"] < st["font_size_ratio"],
+          "2行のほうが大きい設定になっている")
+
+    one = auto_edit.build_ass([TelopEvent(0, 2, "短い一行")], cfg, 1920, 1080, 5.0,
+                              font="F")
+    two = auto_edit.build_ass([TelopEvent(0, 2, "一行目です\\N二行目です")], cfg,
+                              1920, 1080, 5.0, font="F")
+    check(fs_of(two) < fs_of(one), "2行で文字が小さくなっていない")
+    check(abs(fs_of(one) - st["font_size_ratio"] * 1080) < 1.5,
+          f"1行の文字サイズが設定と合わない: {fs_of(one)}")
+
+    # セーフマージンを超える長さは自動で縮む (\q2 で折り返さないため)
+    text = "あ" * 30
+    long_line = auto_edit.build_ass([TelopEvent(0, 2, text)], cfg,
+                                    1920, 1080, 5.0, font="F")
+    got_fs = fs_of(long_line)
+    width_px = auto_edit.estimate_text_width(text, got_fs,
+                                             st["tracking_em"] * got_fs)
+    avail = 1920 * (1 - 2 * st["safe_margin_ratio"])
+    check(width_px <= avail + 1,
+          f"長い1行が画面幅に収まらない: {width_px:.0f}px > {avail:.0f}px")
+    check(got_fs < st["font_size_ratio"] * 1080, "長い1行が縮んでいない")
 
 
 def test_round_rect():
@@ -513,7 +561,8 @@ def main() -> int:
     test_reading_speed()
     test_presets()
     test_talk_preset()
-    test_punch_telop()
+    test_scenes()
+    test_wrapped_font_size()
     test_round_rect()
     test_emphasis()
     test_speaker_band()

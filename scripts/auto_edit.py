@@ -52,7 +52,7 @@ class TelopEvent:
     end: float
     text: str
     speaker: str = ""
-    punch: bool = False   # ツッコミ・ボケ用 (拡大 + フォント切替)
+    scene: str = ""   # シーン名 (configs の scenes: に対応。空なら通常)
 
 
 # ---------------------------------------------------------------- 純ロジック
@@ -135,7 +135,7 @@ def remap_events(events: list, keeps: list, min_duration: float,
         ns, ne = remap_time(ev.start, keeps), remap_time(ev.end, keeps)
         if ne - ns < 0.05:  # 丸ごとカットされた字幕は捨てる
             continue
-        out.append(TelopEvent(ns, ne, ev.text, ev.speaker, ev.punch))
+        out.append(TelopEvent(ns, ne, ev.text, ev.speaker, ev.scene))
     total = output_duration(keeps)
     for i, ev in enumerate(out):
         limit = out[i + 1].start if i + 1 < len(out) else total
@@ -256,7 +256,7 @@ def wrap_lines(text: str, max_chars: float) -> list:
 
 
 SPEAKER_RE = re.compile(r"^\s*([^\s:：]{1,12})\s*[:：]\s*(.+)$", re.DOTALL)
-PUNCH_PREFIX = re.compile(r"^\s*[!！]\s*")
+QUESTION_END = re.compile(r"[?？]\s*$")
 EMPHASIS_MARK = re.compile(r"\*([^*]+)\*")
 # ビジネス系YouTubeは数字を強調するのが定番。単位が付いていれば一緒に拾う
 NUMBER_RE = re.compile(
@@ -273,14 +273,28 @@ def split_speaker(text: str, speakers: dict) -> tuple:
     return "", text
 
 
+def detect_scene(text: str, cfg: dict) -> tuple:
+    """行頭の記号からシーンを判定し (シーン名, 記号を外した本文) を返す。
+
+    記号が無ければ auto ルール(いまは「文末が？なら質問」)で自動判定する。
+    """
+    scenes = cfg.get("scenes") or {}
+    for name, spec in scenes.items():
+        mark = (spec or {}).get("mark")
+        if mark and text.lstrip().startswith(mark):
+            return name, text.lstrip()[len(mark):].lstrip()
+    for name, spec in scenes.items():
+        if (spec or {}).get("auto") == "question" and QUESTION_END.search(text):
+            return name, text
+    return "", text
+
+
 def prepare_event(event: TelopEvent, cfg: dict) -> TelopEvent:
-    """SRTの1行から話者(「名前:」)とツッコミ指定(行頭の「!」)を取り出す。"""
+    """SRTの1行から話者(「名前:」)とシーン(行頭の記号)を取り出す。"""
     name, body = split_speaker(event.text, cfg.get("speakers") or {})
-    punch = bool(PUNCH_PREFIX.match(body))
-    if punch:
-        body = PUNCH_PREFIX.sub("", body)
-    return TelopEvent(event.start, event.end, body,
-                      name or event.speaker, punch or event.punch)
+    scene, body = detect_scene(body, cfg)
+    return TelopEvent(event.start, event.end, body.strip(),
+                      name or event.speaker, scene or event.scene)
 
 
 def _merge_spans(spans: list) -> list:
@@ -355,7 +369,7 @@ def split_telop(event: TelopEvent, max_chars: float, max_lines: int,
         if strip_period:
             text = re.sub(r"[。]+$", "", text)
         end = t + span * (w / total_w)
-        out.append(TelopEvent(t, end, text, event.speaker, event.punch))
+        out.append(TelopEvent(t, end, text, event.speaker, event.scene))
         t = end
     out[-1].end = event.end  # 丸め誤差で縮まないように
     return out
@@ -649,12 +663,21 @@ def build_ass(events: list, cfg: dict, width: int, height: int,
     text_color = ass_color(st["text_color"])
     outer = ass_color(st["double_outline_color"])
     shadow_color = ass_color("000000", st.get("shadow_opacity", 0.45))
-    # ツッコミ・ボケ用: 文字を拡大し、あれば別フォントに切り替える
-    pc = cfg.get("punch") or {}
-    punch_scale = float(pc.get("scale") or 1.0) if pc.get("enabled") else 1.0
-    punch_fs = max(10, round(fs * punch_scale))
-    punch_font = (resolve_font_from(pc.get("font_candidates"), quiet=True) or font
-                  if pc.get("enabled") else font)
+    # シーンごとの見た目(フォント・拡大率・色)を先に解決しておく
+    scene_specs = {}
+    for name, spec in (cfg.get("scenes") or {}).items():
+        spec = spec or {}
+        scene_specs[name] = {
+            "font": resolve_font_from(spec.get("font_candidates"), quiet=True) or font,
+            "scale": float(spec.get("scale") or 1.0),
+            "color": spec.get("color") or st["text_color"],
+            "outline_color": spec.get("outline_color") or "",
+        }
+
+    def scene_of(ev: TelopEvent) -> dict:
+        return scene_specs.get(ev.scene) or {
+            "font": font, "scale": 1.0,
+            "color": st["text_color"], "outline_color": ""}
     header = f"""[Script Info]
 ; auto_edit.py generated (news-style telop)
 ScriptType: v4.00+
@@ -669,7 +692,6 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
 Style: Telop,{font},{fs},{text_color},{text_color},{ass_color(st['outline_color'])},{shadow_color},{bold},0,0,0,100,100,{spacing},0,1,{outline},{shadow},5,0,0,0,1
 Style: TelopEdge,{font},{fs},{outer},{outer},{outer},&H00000000,{bold},0,0,0,100,100,{spacing},0,1,{round(outline * 2.6, 1)},0,5,0,0,0,1
 Style: Shape,{font},{fs},&H00FFFFFF,&H00FFFFFF,&H00FFFFFF,&H00000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1
-Style: Punch,{punch_font},{punch_fs},{ass_color(pc.get('color') or st['text_color'])},{ass_color(pc.get('color') or st['text_color'])},{ass_color(pc.get('outline_color') or st['outline_color'])},{shadow_color},{bold},0,0,0,100,100,{round(spacing * punch_scale, 1)},0,1,{round(outline * punch_scale, 1)},{round(shadow * punch_scale, 1)},5,0,0,0,1
 Style: Title,{font},{title_fs},{ass_color(tl['text_color'])},{ass_color(tl['text_color'])},{ass_color(tl['bg_color'], tl['bg_opacity'])},{ass_color(tl['bg_color'], tl['bg_opacity'])},{bold},0,0,0,100,100,{spacing},0,3,{title_pad},0,7,0,0,0,1
 
 [Events]
@@ -702,13 +724,35 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
     def speaker_outline(ev: TelopEvent) -> str:
         """座布団が無いときは、話者の色を縁取りに使って発言者を区別する。"""
+        scene = scene_of(ev)
+        if scene["outline_color"]:
+            return scene["outline_color"]
         if not bd["enabled"] and speakers.get(ev.speaker):
             return speakers[ev.speaker]
         return st["outline_color"]
 
+    def event_size(ev: TelopEvent) -> float:
+        """このテロップで実際に使う文字サイズ(px)。
+
+        2行になったら小さめの設定に切り替え、それでも画面からはみ出す長さなら
+        収まるところまで縮める(\\q2で自動折返しを切っているため保険が要る)。
+        """
+        ratio = st["font_size_ratio"]
+        wrapped = st.get("font_size_ratio_wrapped")
+        if wrapped and ev.text.count("\\N") >= 1:
+            ratio = wrapped
+        size = ratio * height * scene_of(ev)["scale"]
+        avail = width * (1 - 2 * st["safe_margin_ratio"])
+        est = estimate_text_width(ev.text, size, spacing * size / fs)
+        if est > avail:
+            size *= avail / est
+        # ASSには整数で書き出すので、切り捨てておかないと丸めで幅を超えうる
+        return float(max(10, int(size)))
+
     def body_of(ev: TelopEvent) -> str:
         """強調部分だけ色を変えた本文を組み立てる。"""
-        normal_tags = f"\\1c{text_color}\\3c{ass_color(speaker_outline(ev))}"
+        normal_tags = (f"\\1c{ass_color(scene_of(ev)['color'])}"
+                       f"\\3c{ass_color(speaker_outline(ev))}")
         parts = []
         for seg, is_em in emphasis_runs(ev.text, cfg):
             if seg == "\\N":
@@ -729,14 +773,16 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         s, e = ass_time(ev.start), ass_time(ev.end)
         n_lines = min(max_lines, ev.text.count("\\N") + 1) if bd.get("fit_content") \
             else max_lines
-        y_top = band_top(n_lines, punch_scale if ev.punch else 1.0)
+        ev_fs = event_size(ev)
+        size_scale = ev_fs / fs
+        y_top = band_top(n_lines, size_scale)
         band_color = speakers.get(ev.speaker) or bd["color"]
 
         if bd["enabled"]:
             # 座布団の左右: 全幅か、テキスト幅に合わせるか
             if bd.get("fit_width"):
-                ev_fs = fs * (punch_scale if ev.punch else 1.0)
-                half = estimate_text_width(ev.text, ev_fs, spacing) / 2 + pad_x
+                half = (estimate_text_width(ev.text, ev_fs, spacing * size_scale) / 2
+                        + pad_x * size_scale)
                 x0, x1 = max(0.0, width / 2 - half), min(float(width), width / 2 + half)
             else:
                 x0, x1 = 0.0, float(width)
@@ -771,14 +817,23 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         cx = width / 2
         common = (f"\\an{align}\\pos({cx:.0f},{cy:.0f})\\q2"
                   + (f"\\blur{blur}" if blur else ""))
+        # シーン/行数ごとにフォント・サイズ・縁取りを差し替える
+        scene = scene_of(ev)
+        if scene["font"] != font:
+            common += f"\\fn{scene['font']}"
+        if abs(size_scale - 1.0) > 0.001:
+            common += (f"\\fs{ev_fs:.0f}\\bord{outline * size_scale:.1f}"
+                       f"\\shad{shadow * size_scale:.1f}"
+                       f"\\fsp{spacing * size_scale:.1f}")
         outline_c = speaker_outline(ev)
         if outline_c != st["outline_color"]:
             common += f"\\3c{ass_color(outline_c)}"
-        style = "Punch" if (ev.punch and punch_scale != 1.0) else "Telop"
+        if scene["color"] != st["text_color"]:
+            common += f"\\1c{ass_color(scene['color'])}"
         # 帯なしで映像に直接乗せる場合の可読性確保として二重縁取りを選べる
         if st.get("double_outline"):
             lines.append(f"Dialogue: 2,{s},{e},TelopEdge,,0,0,0,,{{{common}}}{body}")
-        lines.append(f"Dialogue: 3,{s},{e},{style},,0,0,0,,{{{common}}}{body}")
+        lines.append(f"Dialogue: 3,{s},{e},Telop,,0,0,0,,{{{common}}}{body}")
     return "\n".join(lines) + "\n"
 
 

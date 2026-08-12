@@ -33,6 +33,7 @@ style:                        # ニュース番組風テロップの見た目 (1
   font: auto
   font_candidates:
     - Noto Sans JP Black      # 最推奨。無料DL (docs/06参照)。太ゴB101系の代替
+    - Noto Sans JP            # 同上 (fetch_fonts.py で入れたファイルはこの名前)
     - Noto Sans CJK JP Black
     - BIZ UDPGothic           # Windows 10/11 標準。DL不要
     - Meiryo                  # Windows 標準。太字が力強い
@@ -40,7 +41,8 @@ style:                        # ニュース番組風テロップの見た目 (1
     - Yu Gothic
   bold: true
   # 以下 *_em は「文字サイズに対する倍率」。画面解像度が変わっても比率が保たれる
-  font_size_ratio: 0.062      # 文字サイズ / 画面高さ (放送の目安は6〜8%)
+  font_size_ratio: 0.062      # 1行のときの文字サイズ / 画面高さ
+  font_size_ratio_wrapped: ~  # 2行になったときの文字サイズ (~ なら1行と同じ)
   line_height_em: 1.45        # 行間 (日本語は文字サイズの150%前後が下限)
   tracking_em: -0.02          # 字間。マイナスで詰める (文字詰めが"プロっぽさ"の決め手)
   text_color: "FFFFFF"        # 白文字が基本
@@ -62,12 +64,28 @@ emphasis:                     # キーワードだけ色を変える (ビジネ�
   keywords: []                # 常に強調したい語。例: ["圧倒的", "結論"]
   # 文字起こしSRTを手直しするとき *この書き方* で囲んだ部分も強調される
 
-punch:                        # ツッコミ・ボケ用。SRTの行頭に「!」を付けると適用される
-  enabled: true
-  scale: 1.22                 # 文字と座布団を拡大する倍率
-  color: ""                   # 空なら通常の文字色のまま
-  outline_color: ""
-  font_candidates: []         # 別フォントに切り替えたいときだけ書く(無ければ通常フォント)
+scenes:                       # 場面ごとにフォント・大きさ・色を切り替える
+  # SRTの行頭に mark の記号を付けると、その行だけこの見た目になる。
+  # font_candidates が空なら通常フォントのまま。上から順に判定される。
+  punch:                      # ツッコミ・ボケ
+    mark: "!"
+    scale: 1.22
+    font_candidates: []
+    color: ""
+    outline_color: ""
+  point:                      # 要点・結論 (ここぞという一言)
+    mark: "#"
+    scale: 1.12
+    font_candidates: []
+    color: ""
+    outline_color: ""
+  question:                   # 質問 (文末が「？」の行は自動でこれになる)
+    mark: "?"
+    auto: question
+    scale: 1.0
+    font_candidates: []
+    color: ""
+    outline_color: ""
 
 speakers: {}                  # 対談向け: 話者ごとの座布団色。SRTに「名前: 発言」と書く
   # 例)
@@ -132,6 +150,7 @@ presets:
       font_candidates:
         - Source Han Sans JP Heavy   # = 源ノ角ゴシック Heavy (Adobe Fonts名)
         - Noto Sans JP Black         # 同じ設計の無料版
+        - Noto Sans JP               # fetch_fonts.py で入れたファイルはこの名前
         - Noto Sans CJK JP Black
         - BIZ UDPGothic
         - Meiryo
@@ -171,15 +190,18 @@ presets:
       font_candidates:
         - Source Han Sans JP Heavy   # 源ノ角ゴシック Heavy
         - Noto Sans JP Black         # 同設計の無料版
+        - Noto Sans JP               # fetch_fonts.py で入れたファイルはこの名前
         - Noto Sans CJK JP Black
         - BIZ UDPGothic
         - Meiryo
-      font_size_ratio: 0.058  # 座布団に載せる前提。全画面テロップより控えめ
+      # 1行のときは大きく見せ、2行になったら収まるサイズに切り替える
+      font_size_ratio: 0.090
+      font_size_ratio_wrapped: 0.070
       text_color: "FFFFFF"
-      outline_color: "10161C" # 座布団があるので縁は細く暗く
-      outline_em: 0.045
-      shadow_em: 0.035
-      shadow_opacity: 0.4
+      outline_color: "10161C" # 座布団なしで映像に直接乗るので縁は太めに
+      outline_em: 0.095
+      shadow_em: 0.05
+      shadow_opacity: 0.45
       tracking_em: -0.02
     band:                     # 座布団なし。縁取りと影だけで映像から浮かせる
       enabled: false
@@ -197,9 +219,20 @@ presets:
       enabled: true
       color: "FFD34D"         # 年収・金額など数字を目立たせる
       auto_numbers: true
-    punch:
-      enabled: true
-      scale: 1.22
+    scenes:                   # 場面ごとの切り替え (フォントは fetch_fonts.py で追加できる)
+      punch:
+        mark: "!"
+        scale: 1.15
+        font_candidates: [Yusei Magic, Rounded Mplus 1c ExtraBold]
+      point:
+        mark: "#"
+        scale: 1.10
+        font_candidates: [Dela Gothic One]
+      question:
+        mark: "?"
+        auto: question
+        scale: 1.0
+        font_candidates: []
     speakers:                 # 名前は自分の動画に合わせて書き換える
       # 白文字を載せるので、座布団の色は暗め(明るいと文字が沈む)
       株本: "6B4E0F"          # 進行役: 深い金
