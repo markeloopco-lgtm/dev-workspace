@@ -181,8 +181,9 @@ presets:
       shadow_em: 0.035
       shadow_opacity: 0.4
       tracking_em: -0.02
-    band:                     # テキスト幅に合わせた角丸の「座布団」
-      enabled: true
+    band:                     # 座布団なし。縁取りと影だけで映像から浮かせる
+      enabled: false
+      # 座布団を使いたくなったら enabled: true に戻す。話者ごとの色分けが効く
       color: "232B36"         # speakers: を設定すると話者ごとの色に置き換わる
       opacity: 0.9
       gradient: 0.0           # 単色（グラデーションは足さない）

@@ -699,10 +699,16 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
     em = cfg.get("emphasis") or {}
     speakers = cfg.get("speakers") or {}
-    normal_tags = f"\\1c{text_color}\\3c{ass_color(st['outline_color'])}"
+
+    def speaker_outline(ev: TelopEvent) -> str:
+        """座布団が無いときは、話者の色を縁取りに使って発言者を区別する。"""
+        if not bd["enabled"] and speakers.get(ev.speaker):
+            return speakers[ev.speaker]
+        return st["outline_color"]
 
     def body_of(ev: TelopEvent) -> str:
         """強調部分だけ色を変えた本文を組み立てる。"""
+        normal_tags = f"\\1c{text_color}\\3c{ass_color(speaker_outline(ev))}"
         parts = []
         for seg, is_em in emphasis_runs(ev.text, cfg):
             if seg == "\\N":
@@ -765,6 +771,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         cx = width / 2
         common = (f"\\an{align}\\pos({cx:.0f},{cy:.0f})\\q2"
                   + (f"\\blur{blur}" if blur else ""))
+        outline_c = speaker_outline(ev)
+        if outline_c != st["outline_color"]:
+            common += f"\\3c{ass_color(outline_c)}"
         style = "Punch" if (ev.punch and punch_scale != 1.0) else "Telop"
         # 帯なしで映像に直接乗せる場合の可読性確保として二重縁取りを選べる
         if st.get("double_outline"):

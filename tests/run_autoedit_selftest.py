@@ -10,6 +10,7 @@ ffmpegが無い環境では後半をスキップし、その旨を表示して�
 usage: python tests/run_autoedit_selftest.py
 """
 
+import copy
 import math
 import re
 import shutil
@@ -219,8 +220,8 @@ def test_presets():
     news = auto_edit.load_config(auto_edit.DEFAULT_CONFIG, "news")
     talk = auto_edit.load_config(auto_edit.DEFAULT_CONFIG, "talk")
     check(biz["band"]["enabled"] is False, "business preset で座布団が消えていない")
+    check(talk["band"]["enabled"] is False, "talk preset で座布団が消えていない")
     check(news["band"]["enabled"] is True, "news preset で座布団が出ていない")
-    check(talk["band"]["enabled"] is True, "talk preset で座布団が出ていない")
     # マコなり社長系の実測値: 紺の縁取り + 太め
     check(biz["style"]["outline_color"] == "294069", "business の縁取り色が想定外")
     check(biz["style"]["outline_em"] > news["style"]["outline_em"],
@@ -241,9 +242,7 @@ def test_presets():
 def test_talk_preset():
     """年収チャンネル系: 話者色分けの座布団・テキスト幅に合わせた角丸・詰めたカット。"""
     talk = auto_edit.load_config(auto_edit.DEFAULT_CONFIG, "talk")
-    check(talk["band"]["fit_width"] is True, "talk の座布団が文字幅に追従しない")
-    check(talk["band"]["corner_radius_em"] > 0, "talk の座布団が角丸でない")
-    check(talk["band"]["gradient"] == 0, "talk の座布団にグラデーションが入っている")
+    check(talk["band"]["enabled"] is False, "talk の座布団が無効になっていない")
     check(talk["jetcut"]["keep_padding_frames"] == 1.5,
           "talk のカット余白がフレーム指定になっていない")
     # 発話の前後に1.5フレームずつ残す。カット後はその2つが隣り合うので、
@@ -258,22 +257,35 @@ def test_talk_preset():
     check(talk["jetcut"]["join_gap"] < 3 / 30.0,
           "join_gap が大きすぎて狙った間隔でカットされない")
 
-    # 白文字を載せるので座布団の色は暗いこと
-    for name, color in talk["speakers"].items():
-        check(auto_edit.relative_luminance(color) < 0.35,
-              f"話者 {name} の座布団が明るすぎる: {color}")
-    check(auto_edit.warn_light_bands(talk) == [], "既定色で明るさ警告が出ている")
-    bright = dict(talk, speakers={"誰か": "FFEE88"})
-    check(auto_edit.warn_light_bands(bright), "明るい座布団色を検出できていない")
+    # 座布団なしのときは話者の色を縁取りに使って発言者を区別する
+    ass = auto_edit.build_ass([TelopEvent(0, 2, "はい", "株本")], talk,
+                              1920, 1080, 5.0, font="F")
+    check(f"\\3c{auto_edit.ass_color(talk['speakers']['株本'])}" in ass,
+          "座布団なしのとき話者の色が縁取りに反映されていない")
 
-    # 座布団が文字幅に追従する (短い文ほど狭い)
+    # 座布団を有効に戻したときは、文字幅に追従する角丸ボックスになる
+    boxed = copy.deepcopy(talk)
+    boxed["band"]["enabled"] = True
+    check(boxed["band"]["fit_width"] and boxed["band"]["corner_radius_em"] > 0,
+          "座布団を有効にしても文字幅追従・角丸になっていない")
+    check(boxed["band"]["gradient"] == 0, "talk の座布団にグラデーションが入っている")
+
     def band_width(text):
-        ass = auto_edit.build_ass([TelopEvent(0, 2, text, "株本")], talk,
+        out = auto_edit.build_ass([TelopEvent(0, 2, text, "株本")], boxed,
                                   1920, 1080, 5.0, font="F")
-        xs = [int(v) for v in re.findall(r"\\p1\\pos\(0,0\)[^}]*}m (\d+) ", ass)]
+        xs = [int(v) for v in re.findall(r"\\p1\\pos\(0,0\)[^}]*}m (\d+) ", out)]
         return 1920 - 2 * min(xs)
     check(band_width("短い") < band_width("こちらはずっと長い発言になります"),
           "座布団の幅が文字数に追従していない")
+
+    # 白文字を載せるので座布団の色は暗いこと
+    for name, color in talk["speakers"].items():
+        check(auto_edit.relative_luminance(color) < 0.35,
+              f"話者 {name} の色が明るすぎる: {color}")
+    check(auto_edit.warn_light_bands(boxed) == [], "既定色で明るさ警告が出ている")
+    bright = copy.deepcopy(boxed)
+    bright["speakers"] = {"誰か": "FFEE88"}
+    check(auto_edit.warn_light_bands(bright), "明るい座布団色を検出できていない")
 
 
 def test_punch_telop():
@@ -354,6 +366,7 @@ def test_speaker_band():
           "未登録の名前を話者にしてしまっている")
 
     cfg = auto_edit.load_config(auto_edit.DEFAULT_CONFIG, "talk")
+    cfg["band"]["enabled"] = True   # 座布団ありの動作を見る
     cfg["speakers"] = speakers
     ass = auto_edit.build_ass([TelopEvent(0, 2, "はい", "株本")], cfg,
                               1920, 1080, 5.0, font="F")
