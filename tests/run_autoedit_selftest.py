@@ -257,11 +257,33 @@ def test_talk_preset():
     check(talk["jetcut"]["join_gap"] < 3 / 30.0,
           "join_gap が大きすぎて狙った間隔でカットされない")
 
-    # 座布団なしのときは話者の色を縁取りに使って発言者を区別する
-    ass = auto_edit.build_ass([TelopEvent(0, 2, "はい", "株本")], talk,
+    # 座布団なしなので、発言者は文字色で分ける
+    check(talk["speaker_color_target"] == "text",
+          "talk の話者色が文字色に割り当てられていない")
+    guest = auto_edit.build_ass([TelopEvent(0, 2, "はい", "ゲスト")], talk,
+                                1920, 1080, 5.0, font="F")
+    check(f"\\1c{auto_edit.ass_color(talk['speakers']['ゲスト'])}" in guest,
+          "話者ごとの文字色が反映されていない")
+    host = auto_edit.build_ass([TelopEvent(0, 2, "はい", "株本")], talk,
+                               1920, 1080, 5.0, font="F")
+    check(guest != host, "話者が変わっても見た目が同じ")
+
+    # 文字色に使うので、話者の色は明るいこと (暗いと読めない)
+    for name, color in talk["speakers"].items():
+        check(auto_edit.relative_luminance(color) >= 0.30,
+              f"話者 {name} の文字色が暗すぎる: {color}")
+    check(auto_edit.warn_speaker_colors(talk) == [], "既定色で警告が出ている")
+    dark = copy.deepcopy(talk)
+    dark["speakers"] = {"誰か": "101010"}
+    check(auto_edit.warn_speaker_colors(dark), "暗すぎる文字色を検出できていない")
+
+    # outline 指定なら縁取りに反映される
+    outlined = copy.deepcopy(talk)
+    outlined["speaker_color_target"] = "outline"
+    ass = auto_edit.build_ass([TelopEvent(0, 2, "はい", "ゲスト")], outlined,
                               1920, 1080, 5.0, font="F")
-    check(f"\\3c{auto_edit.ass_color(talk['speakers']['株本'])}" in ass,
-          "座布団なしのとき話者の色が縁取りに反映されていない")
+    check(f"\\3c{auto_edit.ass_color(talk['speakers']['ゲスト'])}" in ass,
+          "outline 指定で縁取りに反映されない")
 
     # 座布団を有効に戻したときは、文字幅に追従する角丸ボックスになる
     boxed = copy.deepcopy(talk)
@@ -278,14 +300,11 @@ def test_talk_preset():
     check(band_width("短い") < band_width("こちらはずっと長い発言になります"),
           "座布団の幅が文字数に追従していない")
 
-    # 白文字を載せるので座布団の色は暗いこと
-    for name, color in talk["speakers"].items():
-        check(auto_edit.relative_luminance(color) < 0.35,
-              f"話者 {name} の色が明るすぎる: {color}")
-    check(auto_edit.warn_light_bands(boxed) == [], "既定色で明るさ警告が出ている")
-    bright = copy.deepcopy(boxed)
-    bright["speakers"] = {"誰か": "FFEE88"}
-    check(auto_edit.warn_light_bands(bright), "明るい座布団色を検出できていない")
+    # 座布団に使うなら白文字が沈まないよう暗い色でないと警告する
+    boxed_band = copy.deepcopy(boxed)
+    boxed_band["speaker_color_target"] = "band"
+    boxed_band["speakers"] = {"誰か": "FFEE88"}
+    check(auto_edit.warn_speaker_colors(boxed_band), "明るい座布団色を検出できていない")
 
 
 def fs_of(ass_text):
@@ -400,6 +419,27 @@ def test_emphasis():
     ass = auto_edit.build_ass([TelopEvent(0, 2, "年収1000万円です")], cfg2,
                               1920, 1080, 5.0, font="F")
     check(auto_edit.ass_color("FFE14D") in ass, "強調色がASSに出ていない")
+
+
+def test_line_spacing():
+    """行間はフォント任せにせず line_height_em どおりに自前で置く。"""
+    cfg = auto_edit.load_config(auto_edit.DEFAULT_CONFIG, "talk")
+    ass = auto_edit.build_ass([TelopEvent(0, 2, "一行目\\N二行目")], cfg,
+                              1920, 1080, 5.0, font="F")
+    ys = [float(m) for m in re.findall(r"Dialogue: 3,[^,]+,[^,]+,Telop,[^}]*"
+                                       r"\\pos\(\d+,(-?[0-9.]+)\)", ass)]
+    check(len(ys) == 2, f"行ごとにDialogueが出ていない: {ys}")
+    got = abs(ys[1] - ys[0])
+    want = fs_of(ass) * cfg["style"]["line_height_em"]
+    check(abs(got - want) < 1.5, f"行間が設定と合わない: {got:.1f} (期待 {want:.1f})")
+
+    # 座布団なしのときは最終行の下端が position_ratio に固定される
+    one = auto_edit.build_ass([TelopEvent(0, 2, "一行だけ")], cfg, 1920, 1080, 5.0,
+                              font="F")
+    y_one = float(re.search(r"Dialogue: 3,[^,]+,[^,]+,Telop,[^}]*"
+                            r"\\pos\(\d+,(-?[0-9.]+)\)", one).group(1))
+    check(abs(y_one - max(ys)) < 1.5,
+          f"1行と2行で最終行の位置がずれる: {y_one} vs {max(ys)}")
 
 
 def test_speaker_band():
@@ -565,6 +605,7 @@ def main() -> int:
     test_wrapped_font_size()
     test_round_rect()
     test_emphasis()
+    test_line_spacing()
     test_speaker_band()
     test_no_break_inside_number()
     test_frame_padding()

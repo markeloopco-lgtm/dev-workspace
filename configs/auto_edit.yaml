@@ -32,11 +32,11 @@ style:                        # ニュース番組風テロップの見た目 (1
   # auto = PCにある放送向けフォントを自動選択 (下の候補を上から順に探す)
   font: auto
   font_candidates:
-    - Noto Sans JP Black      # 最推奨。無料DL (docs/06参照)。太ゴB101系の代替
-    - Noto Sans JP            # 同上 (fetch_fonts.py で入れたファイルはこの名前)
+    - BIZ UDPGothic           # Windows 10/11 標準。DL不要で確実に使える
+    - Noto Sans JP Black      # 無料DL (fetch_fonts.py)。太ゴB101系の代替
+    - Noto Sans JP
     - Noto Sans CJK JP Black
-    - BIZ UDPGothic           # Windows 10/11 標準。DL不要
-    - Meiryo                  # Windows 標準。太字が力強い
+    - Meiryo                  # Windows 標準
     - Yu Gothic UI
     - Yu Gothic
   bold: true
@@ -87,10 +87,14 @@ scenes:                       # 場面ごとにフォント・大きさ・色を
     color: ""
     outline_color: ""
 
-speakers: {}                  # 対談向け: 話者ごとの座布団色。SRTに「名前: 発言」と書く
+# 話者の色をどこに使うか: text=文字色 / outline=縁取り / band=座布団 / both / auto
+#   auto は「座布団があれば座布団、無ければ縁取り」
+speaker_color_target: auto
+
+speakers: {}                  # 対談向け: 話者ごとの色。SRTに「名前: 発言」と書く
   # 例)
-  #   株本: "C9A227"
-  #   ゲスト: "1F5F8B"
+  #   株本: "FFFFFF"
+  #   ゲスト: "7FE3FF"
 
 band:                         # テロップの下地 (座布団 / テロップベース)
   enabled: true
@@ -148,11 +152,10 @@ presets:
       min_duration: 0.8
     style:
       font_candidates:
-        - Source Han Sans JP Heavy   # = 源ノ角ゴシック Heavy (Adobe Fonts名)
-        - Noto Sans JP Black         # 同じ設計の無料版
-        - Noto Sans JP               # fetch_fonts.py で入れたファイルはこの名前
+        - BIZ UDPGothic              # Windows標準。DL不要
+        - Noto Sans JP Black
+        - Noto Sans JP
         - Noto Sans CJK JP Black
-        - BIZ UDPGothic
         - Meiryo
       font_size_ratio: 0.075  # ニュースより大きく
       outline_color: "294069" # 紺
@@ -188,15 +191,16 @@ presets:
       reading_speed: 5.0
     style:
       font_candidates:
-        - Source Han Sans JP Heavy   # 源ノ角ゴシック Heavy
-        - Noto Sans JP Black         # 同設計の無料版
-        - Noto Sans JP               # fetch_fonts.py で入れたファイルはこの名前
-        - Noto Sans CJK JP Black
+        # UDゴシック。Windows 10/11 に最初から入っているのでDL不要
         - BIZ UDPGothic
+        - Noto Sans JP Black         # 入れてあればこちらでもよい
+        - Noto Sans JP
+        - Noto Sans CJK JP Black
         - Meiryo
       # 1行のときは大きく見せ、2行になったら収まるサイズに切り替える
-      font_size_ratio: 0.090
-      font_size_ratio_wrapped: 0.070
+      # (UDゴシックは字面が大きいので、この比率でも十分大きく見える)
+      font_size_ratio: 0.080
+      font_size_ratio_wrapped: 0.064
       text_color: "FFFFFF"
       outline_color: "10161C" # 座布団なしで映像に直接乗るので縁は太めに
       outline_em: 0.095
@@ -233,10 +237,13 @@ presets:
         auto: question
         scale: 1.0
         font_candidates: []
+    # 座布団が無いので、発言者は「文字色」で分ける。
+    # 放送の字幕も同じ考え方で、白を基本に黄・水色で話者を分けている
+    speaker_color_target: text
     speakers:                 # 名前は自分の動画に合わせて書き換える
-      # 白文字を載せるので、座布団の色は暗め(明るいと文字が沈む)
-      株本: "6B4E0F"          # 進行役: 深い金
-      ゲスト: "12405F"        # ゲスト: 深い青
+      株本: "FFFFFF"          # 進行役: 白 (基本色)
+      ゲスト: "7FE3FF"        # ゲスト: 水色
+      # 3人目以降を足すなら明るい色で。例) 佐藤: "9CE87F"
 
   # ニュース番組風 (このファイルの既定値そのまま)
   news: {}

@@ -429,20 +429,34 @@ def relative_luminance(rgb_hex: str) -> float:
     return 0.2126 * out[0] + 0.7152 * out[1] + 0.0722 * out[2]
 
 
-def warn_light_bands(cfg: dict) -> list:
-    """白文字が沈むほど明るい座布団色を洗い出す(警告用)。"""
-    if not (cfg.get("band") or {}).get("enabled"):
-        return []
-    colors = {"band.color": cfg["band"]["color"]}
-    colors.update({f"speakers.{k}": v for k, v in (cfg.get("speakers") or {}).items()})
-    light = []
-    for name, value in colors.items():
+def warn_speaker_colors(cfg: dict) -> list:
+    """話者の色が読みにくい向きになっていないか調べる(警告用)。
+
+    座布団や縁取りに使うなら暗い色、文字色に使うなら明るい色でないと沈む。
+    """
+    band_on = bool((cfg.get("band") or {}).get("enabled"))
+    target = (cfg.get("speaker_color_target") or "auto").lower()
+    if target == "auto":
+        target = "band" if band_on else "outline"
+
+    checks = []
+    if band_on:
+        checks.append(("band.color", cfg["band"]["color"], "dark"))
+    want = "light" if target in ("text", "both") else "dark"
+    for name, value in (cfg.get("speakers") or {}).items():
+        checks.append((f"speakers.{name}", value, want))
+
+    problems = []
+    for name, value, kind in checks:
         try:
-            if relative_luminance(value) > 0.35:
-                light.append(f"{name}={value}")
+            lum = relative_luminance(value)
         except (ValueError, IndexError):
             continue
-    return light
+        if kind == "dark" and lum > 0.35:
+            problems.append(f"{name}={value} (明るすぎ。白文字が沈みます)")
+        elif kind == "light" and lum < 0.30:
+            problems.append(f"{name}={value} (暗すぎ。文字が読みにくくなります)")
+    return problems
 
 
 def ass_escape(text: str) -> str:
@@ -721,15 +735,29 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
     em = cfg.get("emphasis") or {}
     speakers = cfg.get("speakers") or {}
+    # 話者の色をどこに反映するか: text=文字色 / outline=縁取り / band=座布団
+    target = (cfg.get("speaker_color_target") or "auto").lower()
+    if target == "auto":
+        target = "band" if bd["enabled"] else "outline"
+
+    def speaker_color(ev: TelopEvent, where: str) -> str:
+        """この話者の色を where に使うなら返す。使わないなら空。"""
+        color = speakers.get(ev.speaker)
+        if not color:
+            return ""
+        return color if target in (where, "both") else ""
+
+    def text_color_of(ev: TelopEvent) -> str:
+        scene = scene_of(ev)
+        if scene["color"] != st["text_color"]:   # シーン指定を最優先
+            return scene["color"]
+        return speaker_color(ev, "text") or st["text_color"]
 
     def speaker_outline(ev: TelopEvent) -> str:
-        """座布団が無いときは、話者の色を縁取りに使って発言者を区別する。"""
         scene = scene_of(ev)
         if scene["outline_color"]:
             return scene["outline_color"]
-        if not bd["enabled"] and speakers.get(ev.speaker):
-            return speakers[ev.speaker]
-        return st["outline_color"]
+        return speaker_color(ev, "outline") or st["outline_color"]
 
     def event_size(ev: TelopEvent) -> float:
         """このテロップで実際に使う文字サイズ(px)。
@@ -749,12 +777,12 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         # ASSには整数で書き出すので、切り捨てておかないと丸めで幅を超えうる
         return float(max(10, int(size)))
 
-    def body_of(ev: TelopEvent) -> str:
+    def body_of(ev: TelopEvent, text: str) -> str:
         """強調部分だけ色を変えた本文を組み立てる。"""
-        normal_tags = (f"\\1c{ass_color(scene_of(ev)['color'])}"
+        normal_tags = (f"\\1c{ass_color(text_color_of(ev))}"
                        f"\\3c{ass_color(speaker_outline(ev))}")
         parts = []
-        for seg, is_em in emphasis_runs(ev.text, cfg):
+        for seg, is_em in emphasis_runs(text, cfg):
             if seg == "\\N":
                 parts.append("\\N")
                 continue
@@ -776,7 +804,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         ev_fs = event_size(ev)
         size_scale = ev_fs / fs
         y_top = band_top(n_lines, size_scale)
-        band_color = speakers.get(ev.speaker) or bd["color"]
+        band_color = speaker_color(ev, "band") or bd["color"]
 
         if bd["enabled"]:
             # 座布団の左右: 全幅か、テキスト幅に合わせるか
@@ -809,14 +837,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 shape(1, s, e, bd["accent_color"], 1.0,
                       _rect(x0, y_top - accent_h, x1, y_top))
 
-        body = body_of(ev)
-        if bd["enabled"]:  # 座布団の中央に置く
-            align, cy = 5, (y_top + y_bottom) / 2
-        else:              # 座布団なしは下端を揃える(行数が変わっても位置が動かない)
-            align, cy = 2, st["position_ratio"] * height
         cx = width / 2
-        common = (f"\\an{align}\\pos({cx:.0f},{cy:.0f})\\q2"
-                  + (f"\\blur{blur}" if blur else ""))
+        common = f"\\q2" + (f"\\blur{blur}" if blur else "")
         # シーン/行数ごとにフォント・サイズ・縁取りを差し替える
         scene = scene_of(ev)
         if scene["font"] != font:
@@ -828,12 +850,29 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         outline_c = speaker_outline(ev)
         if outline_c != st["outline_color"]:
             common += f"\\3c{ass_color(outline_c)}"
-        if scene["color"] != st["text_color"]:
-            common += f"\\1c{ass_color(scene['color'])}"
-        # 帯なしで映像に直接乗せる場合の可読性確保として二重縁取りを選べる
-        if st.get("double_outline"):
-            lines.append(f"Dialogue: 2,{s},{e},TelopEdge,,0,0,0,,{{{common}}}{body}")
-        lines.append(f"Dialogue: 3,{s},{e},Telop,,0,0,0,,{{{common}}}{body}")
+        body_c = text_color_of(ev)
+        if body_c != st["text_color"]:
+            common += f"\\1c{ass_color(body_c)}"
+
+        # 行ごとに位置を指定する。libassの行送りはフォント任せで詰まりがちなので、
+        # line_height_em どおりの行間を自前で作る
+        text_lines = ev.text.split("\\N")
+        line_h_ev = ev_fs * st["line_height_em"]
+        for idx, line_text in enumerate(text_lines):
+            body = body_of(ev, line_text)
+            if bd["enabled"]:  # 座布団の中央に行ブロックを置く
+                center = (y_top + y_bottom) / 2
+                cy = center + (idx - (len(text_lines) - 1) / 2) * line_h_ev
+                align = 5
+            else:              # 座布団なしは最終行の下端を固定する
+                cy = st["position_ratio"] * height \
+                    - (len(text_lines) - 1 - idx) * line_h_ev
+                align = 2
+            tags = f"\\an{align}\\pos({cx:.0f},{cy:.0f})" + common
+            # 帯なしで映像に直接乗せる場合の可読性確保として二重縁取りを選べる
+            if st.get("double_outline"):
+                lines.append(f"Dialogue: 2,{s},{e},TelopEdge,,0,0,0,,{{{tags}}}{body}")
+            lines.append(f"Dialogue: 3,{s},{e},Telop,,0,0,0,,{{{tags}}}{body}")
     return "\n".join(lines) + "\n"
 
 
@@ -1029,9 +1068,8 @@ def render(input_path: Path, plan: dict, events: list, cfg: dict,
     if events or title_text:
         font = resolve_font(cfg)
         print(f"  テロップのフォント: {font}")
-        for light in warn_light_bands(cfg):
-            print(f"[warn] 座布団の色が明るすぎて白文字が沈みます: {light}",
-                  file=sys.stderr)
+        for problem in warn_speaker_colors(cfg):
+            print(f"[warn] 話者の色が読みにくい可能性: {problem}", file=sys.stderr)
         ass_name = "telop.ass"
         (workdir / ass_name).write_text(
             build_ass(events, cfg, plan["width"], plan["height"], total,
@@ -1151,8 +1189,8 @@ def cmd_preview(args) -> int:
     title = args.title if args.title is not None else cfg["title"]["text"]
     font = resolve_font(cfg)
     print(f"  テロップのフォント: {font}  /  preset: {cfg.get('preset') or '(なし)'}")
-    for light in warn_light_bands(cfg):
-        print(f"[warn] 座布団の色が明るすぎて白文字が沈みます: {light}", file=sys.stderr)
+    for problem in warn_speaker_colors(cfg):
+        print(f"[warn] 話者の色が読みにくい可能性: {problem}", file=sys.stderr)
     ass = wd / "_preview.ass"
     ass.write_text(build_ass([events[0]], cfg, width, height,
                              5.0, title, font=font), encoding="utf-8")
