@@ -202,7 +202,9 @@ presets:
       join_gap: 0.06          # 2フレーム以下の間は切らずにつなぐ
       min_keep: 0.25
     telop:
-      max_chars_per_line: auto  # 画面幅いっぱいまで入れる
+      # 文字を大きく見せるため、早めに2行へ折り返す。
+      # auto(幅いっぱい)にすると長い文ほど自動で縮んで小さくなる
+      max_chars_per_line: 15
       max_lines: 2
       min_duration: 0.7       # テンポが速いので短い表示も許す
       reading_speed: 5.0
@@ -219,9 +221,9 @@ presets:
       # Dela Gothic One は元から極太なので太字を掛けない (掛けると字が潰れる)
       bold: false
       # 1行のときは大きく見せ、2行になったら収まるサイズに切り替える
-      # (Dela Gothic One は字面が大きく幅も広いので、やや控えめの比率)
-      font_size_ratio: 0.076
-      font_size_ratio_wrapped: 0.062
+      font_size_ratio: 0.105          # 1080pで約113px
+      font_size_ratio_wrapped: 0.085  # 同 約92px
+      line_height_em: 1.25            # 文字が大きいぶん行間は詰める
       text_color: "FFFFFF"
       outline_color: "10161C" # 座布団なしで映像に直接乗るので縁は太めに
       outline_em: 0.095

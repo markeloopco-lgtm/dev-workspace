@@ -466,14 +466,21 @@ def test_tv_touches():
 
 def test_line_budget():
     """max_chars_per_line: auto は画面幅から1行の文字数を決める。"""
-    cfg = auto_edit.load_config(auto_edit.DEFAULT_CONFIG, "talk")
+    # talk は「文字を大きく」を優先して固定値、business は幅いっぱいの auto
+    talk = auto_edit.load_config(auto_edit.DEFAULT_CONFIG, "talk")
+    check(isinstance(talk["telop"]["max_chars_per_line"], int),
+          "talk が固定文字数になっていない")
+    check(talk["telop"]["max_chars_per_line"] <= 16,
+          "talk の1行が長すぎて文字を大きくできない")
+
+    cfg = auto_edit.load_config(auto_edit.DEFAULT_CONFIG, "business")
     st = cfg["style"]
     check(str(cfg["telop"]["max_chars_per_line"]).lower() == "auto",
-          "talk が auto になっていない")
+          "business が auto になっていない")
     budget = auto_edit.line_budget(cfg, 1920, 1080)
 
     # 上限ぴったりの1行が、左右マージンの内側にちょうど収まる
-    fs = st["font_size_ratio_wrapped"] * 1080
+    fs = (st.get("font_size_ratio_wrapped") or st["font_size_ratio"]) * 1080
     got = auto_edit.estimate_text_width("あ" * int(budget), fs, st["tracking_em"] * fs)
     avail = 1920 * (1 - 2 * st["safe_margin_ratio"])
     check(got <= avail + 1, f"上限まで入れると幅を超える: {got:.0f} > {avail:.0f}")
