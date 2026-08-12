@@ -1,8 +1,26 @@
-# 06. ニュース風自動編集 (ジェットカット + テロップ + BGM)
+# 06. 自動編集 (ジェットカット + テロップ + BGM)
 
 録画した動画(配信アーカイブ・解説動画など)を**コマンド1回**で
-「無音カット + ニュース番組風テロップ + BGM」に仕上げるツール。
+「無音カット + テロップ + BGM」に仕上げるツール。
 全部無料・ローカル処理(アップロード不要)。
+
+## テロップの様式 (preset)
+
+`configs/auto_edit.yaml` の `preset:` で切り替える。既定は `business`。
+
+| preset | 見た目 | 参考にした型 |
+|---|---|---|
+| **business** | 座布団なし。白文字＋**紺(#294069)の太い縁取り**＋影。キーワードと数字が黄色 | マコなり社長などビジネス系YouTube |
+| **talk** | 座布団あり。**話者ごとに座布団の色を変える**。カットは最も詰める | 年収チャンネルなどの対談 |
+| **news** | 画面下の帯＋金のアクセントライン | 報道番組 |
+
+コマンドごとに `--preset` で一時的に上書きもできる。
+
+```powershell
+python scripts/auto_edit.py preview --preset business
+python scripts/auto_edit.py preview --preset talk
+python scripts/auto_edit.py preview --preset news
+```
 
 ```
 入力動画 (mp4など)
@@ -51,6 +69,39 @@ python scripts/auto_edit.py run 録画.mp4 --no-telop
 初回だけ文字起こしモデル(約500MB)のダウンロードで数分かかる。
 2回目からはすぐ始まる。
 
+## キーワードの色替え（business / talk）
+
+ビジネス系YouTubeの特徴である「大事なところだけ色を変える」を自動でやる。
+3つの効き方があり、`configs/auto_edit.yaml` の `emphasis:` で調整する。
+
+| やり方 | 例 | 設定 |
+|---|---|---|
+| **数字を自動で強調** | 年収**1000万円**、上位**3割** | `auto_numbers: true`（既定でON） |
+| **決めた語を常に強調** | **結論**から言うと | `keywords: ["結論", "圧倒的"]` |
+| **その場で指定** | SRTに `*ここだけ*` と書く | 文字起こしを直すついでに囲む |
+
+「1000万円」「Live2D」のような**数字や英単語が改行で割れない**ようにしてある。
+
+## 対談動画で話者を色分けする（talk）
+
+年収チャンネルのように、**誰の発言かを座布団の色で示す**やり方。
+`configs/auto_edit.yaml` に話者と色を書き、SRTを「名前: 発言」の形にする。
+
+```yaml
+speakers:
+  株本: "FFD34D"     # 進行役は黄色系
+  ゲスト: "7FD4FF"   # ゲストは水色系
+```
+
+```
+2
+00:00:06,200 --> 00:00:09,800
+ゲスト: 前職の年収は600万円くらいでした
+```
+
+登録していない名前は普通の発言として扱うので、「結論: 〜」のような
+書き出しが誤って話者と判定されることはない。
+
 ## フォント（テロップの印象を一番左右する）
 
 `configs/auto_edit.yaml` は `font: auto` になっていて、**PCにあるフォントを
@@ -62,11 +113,14 @@ python scripts/auto_edit.py fonts
 
 | 優先順 | フォント | 入手 |
 |---|---|---|
-| 1 | **Noto Sans JP Black** | 無料DL（下記）。報道番組の定番書体の代替として実務者が第一に挙げるもの |
-| 2 | BIZ UDPGothic | Windows 10/11 に最初から入っている（DL不要） |
-| 3 | メイリオ / 游ゴシック | Windows 標準 |
+| 1 | **源ノ角ゴシック Heavy**（= Source Han Sans JP Heavy） | マコなり社長のテロップで使われている書体。Adobe Fonts |
+| 2 | **Noto Sans JP Black** | 上と同設計の無料版。Google Fonts から無料DL（下記） |
+| 3 | BIZ UDPGothic | Windows 10/11 に最初から入っている（DL不要） |
+| 4 | メイリオ / 游ゴシック | Windows 標準 |
 
-DL不要でもそれなりに見えるが、**Noto Sans JP Black を入れると一段ニュースらしくなる**。
+源ノ角ゴシックとNoto Sans JPは**同じ設計の兄弟フォント**（Adobe と Google が共同開発）で、
+Adobe Fonts を契約していなくても Noto Sans JP Black を入れればほぼ同じ見た目になる。
+
 入れ方は `assets/fonts/README.md` の3ステップ（ZIPの中の `NotoSansJP-Black.ttf` を
 `assets/fonts/` にコピーするだけ。インストール作業は不要）。
 
@@ -185,9 +239,27 @@ ffmpegがあれば合成動画で「無音検出→カット→テロップ焼�
 
 編集対象の動画・音声そのものの権利(ゲーム画面・楽曲など)は別途各規約に従うこと。
 
-## 参考にした放送・字幕の基準
+## 参考にした基準
 
 既定値の根拠。数値の出どころを残しておくので、好みで動かすときの目安にする。
+なお参考にしたのは**編集の作法（書体の太さ・縁取り・カットの詰め方）だけ**で、
+各チャンネルのロゴや固有のデザインは使っていない。
+
+### ビジネス系YouTube (business / talk preset)
+
+- マコなり社長のテロップは**源ノ角ゴシック Heavy**、縁取りは**紺 #294069**
+  — [マコなり社長のフォントは？ビジネス系完コピ動画の作り方](https://chiripoteto.com/2024/04/06/business_youtube/)
+- 年収チャンネルは**発声と発声の間を常に2〜3フレーム**まで詰める。通常テロップは
+  座布団を使い、**イメージカラーで誰の発言か分かる**ようにしている。SEは
+  ツッコミだけでなく**要点や質問のときにも**入れる
+  — [年収チャンネル 制作事例（エンジーニアス）](https://sg.wantedly.com/portfolio/projects/67709)
+- 源ノ角ゴシックは Extra Light〜Heavy の7ウェイト。Noto Sans JP は同設計の無料版
+  — [源ノ角ゴシックとNoto Sansの違い](https://dtptransit.design/fonts/genno-noto-sans-matome.html)
+- ビジネス系は**白文字＋黒(濃色)の縁取り**が標準、強調は赤か黄
+  — [見やすいテロップの入れ方](https://omniweb.jp/m25/)、
+  [テロップデザインの基本完全ガイド](https://bopeblog.com/telop-design-youtube-font-layout-guide/)
+
+### 放送・字幕の基準 (news preset と共通の土台)
 
 - 1画面2行まで／表示は2秒以上6.5秒以下／1秒あたり全角4文字
   — [日本コンベンションサービス](https://www.convention.co.jp/news/detail/contents_type=16&id=1043)、

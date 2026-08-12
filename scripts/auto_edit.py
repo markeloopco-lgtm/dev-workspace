@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
-"""録画をニュース番組風に自動編集する: ジェットカット + テロップ + BGM。
+"""録画を自動編集する: ジェットカット + テロップ + BGM。
 
 ffmpegのsilencedetectで無音区間を検出してジェットカット(無音飛ばし)し、
-faster-whisper(ローカル・無料)の文字起こしからニュース風テロップ
-(下部の帯 + 白抜き太字)をASS字幕として生成、カットと焼き込みと
-BGMミックスを1回のエンコードで行う。全工程無料・GPU任意。
+faster-whisper(ローカル・無料)の文字起こしからテロップをASS字幕として生成、
+カットと焼き込みとBGMミックスを1回のエンコードで行う。全工程無料・GPU任意。
+
+テロップの様式は preset で選ぶ (configs/auto_edit.yaml):
+  business … ビジネス系YouTube (座布団なし・太い縁取り・キーワード色替え)
+  talk     … 対談向け (話者ごとに座布団を色分け・詰めたカット)
+  news     … ニュース番組風 (画面下の帯 + 金のライン)
 
 文字起こしは作業フォルダに telop.srt として保存されるため、
 誤認識をテキストエディタで直してから render をやり直せば反映される。
@@ -47,6 +51,7 @@ class TelopEvent:
     start: float
     end: float
     text: str
+    speaker: str = ""
 
 
 # ---------------------------------------------------------------- 純ロジック
@@ -129,7 +134,7 @@ def remap_events(events: list, keeps: list, min_duration: float,
         ns, ne = remap_time(ev.start, keeps), remap_time(ev.end, keeps)
         if ne - ns < 0.05:  # 丸ごとカットされた字幕は捨てる
             continue
-        out.append(TelopEvent(ns, ne, ev.text))
+        out.append(TelopEvent(ns, ne, ev.text, ev.speaker))
     total = output_duration(keeps)
     for i, ev in enumerate(out):
         limit = out[i + 1].start if i + 1 < len(out) else total
@@ -146,13 +151,39 @@ def remap_events(events: list, keeps: list, min_duration: float,
 
 
 def display_width(text: str) -> float:
-    """全角=1, 半角=0.5 で表示幅を数える。"""
+    """全角=1, 半角=0.5 で表示幅を数える(強調マーカーの * は数えない)。"""
     return sum(1.0 if unicodedata.east_asian_width(c) in "FWA" else 0.5
-               for c in text)
+               for c in text if c != "*")
 
 
-KINSOKU_HEAD = "、。！？!?…,)）」』"  # 行頭に置かない文字(簡易禁則)
+# 行頭に置かない文字(簡易禁則)。句読点・閉じ括弧に加えて、
+# 小書き仮名と長音符も行頭に来ると読みにくい(「…がき/ょう…」を防ぐ)
+KINSOKU_HEAD = (
+    "、。！？!?…,)）」』】〕〉》"
+    "ぁぃぅぇぉっゃゅょゎゕゖ"
+    "ァィゥェォッャュョヮヵヶ"
+    "ーヽヾゝゞ々〜"
+)
 PUNCT_TAIL = "、。！？!?…,"           # ここで改行すると自然に読める文字
+WORD_CHAR = re.compile(r"[0-9０-９A-Za-zＡ-Ｚａ-ｚ.%％]")  # 途中で切らない文字
+
+
+def _protected_spans(text: str) -> list:
+    """途中で改行したくない範囲。「1000万円」「50%」や *強調* の囲みを割らない。"""
+    spans = [(m.start(), m.end()) for m in NUMBER_RE.finditer(text) if m.group()]
+    return spans + [(m.start(), m.end()) for m in EMPHASIS_MARK.finditer(text)]
+
+
+def _can_break(text: str, i: int, spans: list = ()) -> bool:
+    """text[i] の直前で改行してよいか。"""
+    if i <= 0 or i >= len(text):
+        return False
+    if text[i] in KINSOKU_HEAD:  # 行頭禁則
+        return False
+    if any(s < i < e for s, e in spans):
+        return False
+    # 英数字の連なりは割らない (「Live2D」が途中で切れるのを防ぐ)
+    return not (WORD_CHAR.match(text[i - 1]) and WORD_CHAR.match(text[i]))
 
 
 def _wrap_greedy(text: str, max_chars: float) -> list:
@@ -171,6 +202,12 @@ def _wrap_greedy(text: str, max_chars: float) -> list:
             rest = cur[cut:]
             if rest and all(c in KINSOKU_HEAD for c in rest):
                 break  # はみ出しが句読点だけなら、ぶら下げて1行に収める
+            back = cut  # 数字や英単語の途中に落ちたら手前の切れ目まで戻す
+            spans = _protected_spans(cur)
+            while back > 1 and not _can_break(cur, back, spans):
+                back -= 1
+            if back > 1:
+                cut = back
             while cut < len(cur) and cur[cut] in KINSOKU_HEAD:  # 行頭禁則
                 cut += 1
             if cut >= len(cur):
@@ -185,8 +222,9 @@ def _wrap_greedy(text: str, max_chars: float) -> list:
 def _balance_two(text: str, max_chars: float) -> list:
     """2行に割る位置を全探索して選ぶ。行長が揃うほど良く、句読点の切れ目を優先。"""
     best = None
+    spans = _protected_spans(text)
     for i in range(1, len(text)):
-        if text[i] in KINSOKU_HEAD:  # 行頭禁則
+        if not _can_break(text, i, spans):
             continue
         left, right = text[:i].rstrip(), text[i:].lstrip()
         if not left or not right:
@@ -216,6 +254,77 @@ def wrap_lines(text: str, max_chars: float) -> list:
     return lines
 
 
+SPEAKER_RE = re.compile(r"^\s*([^\s:：]{1,12})\s*[:：]\s*(.+)$", re.DOTALL)
+EMPHASIS_MARK = re.compile(r"\*([^*]+)\*")
+# ビジネス系YouTubeは数字を強調するのが定番。単位が付いていれば一緒に拾う
+NUMBER_RE = re.compile(
+    r"[0-9０-９]+(?:[.,．][0-9０-９]+)?"
+    # 長い単位から並べる(「万円」より先に「万」を書くと "1000万" で切れる)
+    r"(?:万円|億円|ヶ月|か月|カ月|時間|%|％|割|倍|円|万|億|年|日|人|件|位|分|秒)?")
+
+
+def split_speaker(text: str, speakers: dict) -> tuple:
+    """「名前: 発言」を (名前, 発言) に分ける。既知の話者名でなければ分けない。"""
+    m = SPEAKER_RE.match(text)
+    if m and speakers and m.group(1) in speakers:
+        return m.group(1), m.group(2).strip()
+    return "", text
+
+
+def _merge_spans(spans: list) -> list:
+    merged = []
+    for s, e in sorted(spans):
+        if merged and s <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], e)
+        else:
+            merged.append([s, e])
+    return merged
+
+
+def emphasis_runs(text: str, cfg: dict) -> list:
+    """テロップ本文を [(部分文字列, 強調か), ...] に分解する。
+
+    `*ここ*` の囲み・キーワード一覧・数字(auto_numbers)を強調扱いにする。
+    改行 "\\N" は独立した要素として残す(行をまたぐ強調は分割される)。
+    """
+    em = cfg.get("emphasis") or {}
+    runs = []
+    for i, part in enumerate(text.split("\\N")):
+        if i:
+            runs.append(("\\N", False))
+        # `*...*` を外し、外した範囲を強調スパンとして覚える
+        plain, marked, idx = "", [], 0
+        for m in EMPHASIS_MARK.finditer(part):
+            plain += part[idx:m.start()]
+            start = len(plain)
+            plain += m.group(1)
+            marked.append([start, len(plain)])
+            idx = m.end()
+        plain += part[idx:]
+
+        if not em.get("enabled"):
+            runs.append((plain, False))
+            continue
+
+        spans = list(marked)
+        for kw in (em.get("keywords") or []):
+            if kw:
+                spans += [[m.start(), m.end()] for m in re.finditer(re.escape(kw), plain)]
+        if em.get("auto_numbers"):
+            spans += [[m.start(), m.end()] for m in NUMBER_RE.finditer(plain)
+                      if m.group().strip()]
+
+        cur = 0
+        for s, e in _merge_spans(spans):
+            if s > cur:
+                runs.append((plain[cur:s], False))
+            runs.append((plain[s:e], True))
+            cur = e
+        if cur < len(plain):
+            runs.append((plain[cur:], False))
+    return [(t, f) for t, f in runs if t]
+
+
 def split_telop(event: TelopEvent, max_chars: float, max_lines: int,
                 strip_period: bool = True) -> list:
     """1つの文字起こし区間を「max_lines行までのテロップ」列に分割する。
@@ -234,7 +343,7 @@ def split_telop(event: TelopEvent, max_chars: float, max_lines: int,
         if strip_period:
             text = re.sub(r"[。]+$", "", text)
         end = t + span * (w / total_w)
-        out.append(TelopEvent(t, end, text))
+        out.append(TelopEvent(t, end, text, event.speaker))
         t = end
     out[-1].end = event.end  # 丸め誤差で縮まないように
     return out
@@ -285,7 +394,9 @@ def ass_color(rgb_hex: str, opacity: float = 1.0) -> str:
 
 
 def ass_escape(text: str) -> str:
-    return text.replace("{", "(").replace("}", ")").replace("\n", "\\N")
+    # 対にならなかった強調マーカーの * は表示せずに落とす
+    return (text.replace("{", "(").replace("}", ")")
+            .replace("\n", "\\N").replace("*", ""))
 
 
 # ---------------------------------------------------------------- フォント解決
@@ -505,12 +616,34 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             f"{{\\an7\\pos({x + bar_w + title_pad:.0f},{y + title_pad:.0f})}}"
             f"{ass_escape(title_text)}")
 
+    em = cfg.get("emphasis") or {}
+    speakers = cfg.get("speakers") or {}
+    normal_tags = f"\\1c{text_color}\\3c{ass_color(st['outline_color'])}"
+
+    def body_of(ev: TelopEvent) -> str:
+        """強調部分だけ色を変えた本文を組み立てる。"""
+        parts = []
+        for seg, is_em in emphasis_runs(ev.text, cfg):
+            if seg == "\\N":
+                parts.append("\\N")
+                continue
+            escaped = ass_escape(seg)
+            if not is_em:
+                parts.append(escaped)
+                continue
+            tags = f"\\1c{ass_color(em.get('color') or 'FFE14D')}"
+            if em.get("outline_color"):
+                tags += f"\\3c{ass_color(em['outline_color'])}"
+            parts.append(f"{{{tags}}}{escaped}{{{normal_tags}}}")
+        return "".join(parts)
+
     steps = max(1, int(bd["gradient_steps"])) if bd["gradient"] > 0 else 1
     for ev in events:
         s, e = ass_time(ev.start), ass_time(ev.end)
         n_lines = min(max_lines, ev.text.count("\\N") + 1) if bd.get("fit_content") \
             else max_lines
         y_top = band_top(n_lines)
+        band_color = speakers.get(ev.speaker) or bd["color"]
 
         if bd["enabled"]:
             # 帯: 上ほどわずかに透けるグラデーション。矩形を「下端まで」重ねて
@@ -525,14 +658,19 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 if add <= 0.001:
                     continue
                 y = y_top + (y_bottom - y_top) * i / steps
-                shape(0, s, e, bd["color"], add, _rect(0, y, width, y_bottom))
+                shape(0, s, e, band_color, add, _rect(0, y, width, y_bottom))
             if accent_h >= 1:
                 shape(1, s, e, bd["accent_color"], 1.0,
                       _rect(0, y_top - accent_h, width, y_top))
 
-        cx, cy = width / 2, (y_top + y_bottom) / 2
-        body = ass_escape(ev.text)
-        common = f"\\an5\\pos({cx:.0f},{cy:.0f})\\q2" + (f"\\blur{blur}" if blur else "")
+        body = body_of(ev)
+        if bd["enabled"]:  # 座布団の中央に置く
+            align, cy = 5, (y_top + y_bottom) / 2
+        else:              # 座布団なしは下端を揃える(行数が変わっても位置が動かない)
+            align, cy = 2, st["position_ratio"] * height
+        cx = width / 2
+        common = (f"\\an{align}\\pos({cx:.0f},{cy:.0f})\\q2"
+                  + (f"\\blur{blur}" if blur else ""))
         # 帯なしで映像に直接乗せる場合の可読性確保として二重縁取りを選べる
         if st.get("double_outline"):
             lines.append(f"Dialogue: 2,{s},{e},TelopEdge,,0,0,0,,{{{common}}}{body}")
@@ -583,9 +721,30 @@ def build_filter_script(keeps: list, has_ass: bool, ass_name: str,
 
 # ---------------------------------------------------------------- 外部ツール連携
 
-def load_config(path: Path) -> dict:
+def deep_merge(base: dict, override: dict) -> dict:
+    """辞書を再帰的に上書きする(リストは丸ごと差し替え)。"""
+    out = dict(base)
+    for key, value in (override or {}).items():
+        if isinstance(value, dict) and isinstance(out.get(key), dict):
+            out[key] = deep_merge(out[key], value)
+        else:
+            out[key] = value
+    return out
+
+
+def load_config(path: Path, preset: str = None) -> dict:
+    """設定を読み、preset の上書きを適用する。"""
     with open(path, encoding="utf-8") as f:
-        return yaml.safe_load(f)
+        cfg = yaml.safe_load(f)
+    presets = cfg.pop("presets", None) or {}
+    name = preset or cfg.get("preset")
+    if name:
+        if name not in presets:
+            sys.exit(f"[error] 知らないpresetです: {name}\n"
+                     f"  使えるのは: {', '.join(presets) or '(なし)'}")
+        cfg = deep_merge(cfg, presets[name])
+    cfg["preset"] = name or ""
+    return cfg
 
 
 def need_tool(name: str) -> str:
@@ -601,18 +760,25 @@ def probe(input_path: Path) -> dict:
     """動画の長さ・解像度・音声の有無を取得する。"""
     out = subprocess.run(
         [need_tool("ffprobe"), "-v", "error", "-show_entries",
-         "format=duration:stream=codec_type,width,height",
+         "format=duration:stream=codec_type,width,height,r_frame_rate",
          "-of", "json", str(input_path)],
         capture_output=True, text=True, check=True).stdout
     info = json.loads(out)
     width = height = 0
+    fps = 30.0
     has_audio = False
     for st in info.get("streams", []):
         if st.get("codec_type") == "video" and not width:
             width, height = int(st.get("width", 0)), int(st.get("height", 0))
+            num, _, den = (st.get("r_frame_rate") or "30/1").partition("/")
+            try:
+                if float(den or 1) > 0:
+                    fps = float(num) / float(den or 1)
+            except ValueError:
+                pass
         if st.get("codec_type") == "audio":
             has_audio = True
-    return {"duration": float(info["format"]["duration"]),
+    return {"duration": float(info["format"]["duration"]), "fps": fps or 30.0,
             "width": width, "height": height, "has_audio": has_audio}
 
 
@@ -632,16 +798,20 @@ def analyze(input_path: Path, cfg: dict) -> dict:
     if not info["has_audio"]:
         sys.exit("[error] 音声トラックがありません。ジェットカットは音声を基準にします。")
     jc = cfg["jetcut"]
+    # フレーム指定があれば秒に直す(「発話の間は2〜3フレーム」を再現するため)
+    pad = jc["keep_padding"]
+    if jc.get("keep_padding_frames"):
+        pad = float(jc["keep_padding_frames"]) / info["fps"]
     silences = detect_silences(input_path, cfg, info["duration"])
-    keeps = build_keep_segments(silences, info["duration"], jc["keep_padding"],
+    keeps = build_keep_segments(silences, info["duration"], pad,
                                 jc["join_gap"], jc["min_keep"])
     if not keeps:
         sys.exit("[error] 全編が無音判定になりました。configs/auto_edit.yaml の "
                  "silence_threshold_db を下げて(例: -45)再実行してください。")
     return {"input": str(input_path), "duration": info["duration"],
-            "width": info["width"], "height": info["height"],
+            "width": info["width"], "height": info["height"], "fps": info["fps"],
             "keep_segments": [[round(s, 3), round(e, 3)] for s, e in keeps],
-            "params": dict(jc)}
+            "params": dict(jc, keep_padding_applied=round(pad, 4))}
 
 
 def transcribe(input_path: Path, cfg: dict) -> list:
@@ -674,9 +844,13 @@ def transcribe(input_path: Path, cfg: dict) -> list:
 
 def make_telop_events(raw_events: list, plan: dict, cfg: dict) -> list:
     tc = cfg["telop"]
+    speakers = cfg.get("speakers") or {}
     keeps = [tuple(seg) for seg in plan["keep_segments"]]
     split = []
     for ev in raw_events:
+        # 「名前: 発言」形式なら話者を取り出す(座布団の色分けに使う)
+        name, body = split_speaker(ev.text, speakers)
+        ev = TelopEvent(ev.start, ev.end, body, name or ev.speaker)
         split.extend(split_telop(ev, tc["max_chars_per_line"], tc["max_lines"],
                                  tc["strip_trailing_period"]))
     return remap_events(split, keeps, tc["min_duration"],
@@ -766,11 +940,11 @@ def print_plan_summary(plan: dict) -> None:
     print(f"  カット   : {cut:.1f}秒 ({cut / plan['duration'] * 100:.0f}%削減)")
 
 
-SAMPLE_TELOP = ["ライブ配信の自動編集システムが", "きょう公開されました"]
+SAMPLE_TELOP = "上位3割の人だけが知っている*たった1つ*の方法をお伝えします"
 
 
 def cmd_fonts(args) -> int:
-    cfg = load_config(Path(args.config))
+    cfg = load_config(Path(args.config), args.preset)
     drop = dropin_fonts()
     installed = installed_font_families()
     print(f"assets/fonts に置かれたフォント: "
@@ -791,7 +965,7 @@ def cmd_fonts(args) -> int:
 
 def cmd_preview(args) -> int:
     """テロップの見た目だけを静止画1枚で確認する(動画を丸ごと書き出さない)。"""
-    cfg = load_config(Path(args.config))
+    cfg = load_config(Path(args.config), args.preset)
     ffmpeg = need_tool("ffmpeg")
     wd = Path(args.output).resolve().parent
     wd.mkdir(parents=True, exist_ok=True)
@@ -809,12 +983,18 @@ def cmd_preview(args) -> int:
                         f"gradients=s={width}x{height}:c0=0x1b2838:c1=0x4a6d8c:d=1",
                         "-frames:v", "1", str(frame)], check=True)
 
-    text = args.text or "\\N".join(SAMPLE_TELOP)
+    tc = cfg["telop"]
+    raw = args.text or SAMPLE_TELOP
+    # 本番と同じ折り返し・話者判定を通す(プレビューと仕上がりを一致させる)
+    name, body = split_speaker(raw, cfg.get("speakers") or {})
+    events = split_telop(TelopEvent(0.0, 5.0, body, name),
+                         tc["max_chars_per_line"], tc["max_lines"],
+                         tc["strip_trailing_period"]) or [TelopEvent(0.0, 5.0, raw)]
     title = args.title if args.title is not None else cfg["title"]["text"]
     font = resolve_font(cfg)
-    print(f"  テロップのフォント: {font}")
+    print(f"  テロップのフォント: {font}  /  preset: {cfg.get('preset') or '(なし)'}")
     ass = wd / "_preview.ass"
-    ass.write_text(build_ass([TelopEvent(0.0, 5.0, text)], cfg, width, height,
+    ass.write_text(build_ass([events[0]], cfg, width, height,
                              5.0, title, font=font), encoding="utf-8")
 
     opts = f"subtitles={ass.name}"
@@ -834,7 +1014,7 @@ def cmd_preview(args) -> int:
 
 
 def cmd_analyze(args) -> int:
-    cfg = load_config(Path(args.config))
+    cfg = load_config(Path(args.config), args.preset)
     input_path = Path(args.input)
     plan = analyze(input_path, cfg)
     wd = default_workdir(input_path)
@@ -846,7 +1026,7 @@ def cmd_analyze(args) -> int:
 
 
 def cmd_transcribe(args) -> int:
-    cfg = load_config(Path(args.config))
+    cfg = load_config(Path(args.config), args.preset)
     input_path = Path(args.input)
     events = transcribe(input_path, cfg)
     wd = default_workdir(input_path)
@@ -880,7 +1060,7 @@ def _resolve_bgm(args, cfg) -> Path:
 
 
 def cmd_render(args) -> int:
-    cfg = load_config(Path(args.config))
+    cfg = load_config(Path(args.config), args.preset)
     input_path = Path(args.input)
     wd = default_workdir(input_path)
     plan_path = Path(args.plan) if args.plan else wd / "plan.json"
@@ -911,7 +1091,7 @@ def cmd_render(args) -> int:
 
 
 def cmd_run(args) -> int:
-    cfg = load_config(Path(args.config))
+    cfg = load_config(Path(args.config), args.preset)
     input_path = Path(args.input)
     wd = default_workdir(input_path)
 
@@ -956,6 +1136,7 @@ def main() -> int:
     def common(p, telop_opts=True):
         p.add_argument("input", help="入力動画 (mp4/mkv/mov等)")
         p.add_argument("--config", default=str(DEFAULT_CONFIG))
+        p.add_argument("--preset", help="テロップ様式 (business / talk / news)")
         if telop_opts:
             p.add_argument("-o", "--output", help="出力先 (省略時: 入力_edited.mp4)")
             p.add_argument("--no-telop", action="store_true", help="テロップなし")
@@ -983,6 +1164,7 @@ def main() -> int:
     p = sub.add_parser("preview", help="テロップの見た目を静止画1枚で確認する")
     p.add_argument("input", nargs="?", help="入力動画 (省略時は無地の背景で確認)")
     p.add_argument("--config", default=str(DEFAULT_CONFIG))
+    p.add_argument("--preset", help="テロップ様式 (business / talk / news)")
     p.add_argument("-o", "--output", default="telop_preview.png")
     p.add_argument("--text", help="サンプル文言 (改行は \\N)")
     p.add_argument("--title", help="左上の番組名バー")
@@ -990,6 +1172,7 @@ def main() -> int:
 
     p = sub.add_parser("fonts", help="使えるテロップ用フォントを調べる")
     p.add_argument("--config", default=str(DEFAULT_CONFIG))
+    p.add_argument("--preset", help="テロップ様式 (business / talk / news)")
     p.set_defaults(func=cmd_fonts)
 
     args = parser.parse_args()

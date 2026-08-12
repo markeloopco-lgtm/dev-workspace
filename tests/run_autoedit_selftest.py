@@ -103,6 +103,13 @@ def test_wrap_and_split():
     lines = auto_edit.wrap_lines("あ" * 25, 10)
     check(lines == ["あ" * 10, "あ" * 10, "あ" * 5], f"強制改行が想定外: {lines}")
 
+    # 小書き仮名・長音符を行頭にしない (「…がき/ょう…」を防ぐ)
+    for text, limit in [("自動編集ツールがきょう公開されました", 15),
+                        ("シャッターチャンスを逃さないコツ", 12)]:
+        lines = auto_edit.wrap_lines(text, limit)
+        check(all(l[0] not in auto_edit.KINSOKU_HEAD for l in lines[1:]),
+              f"禁則文字が行頭に来た: {lines}")
+
     # 2行に収まる長さは行長を揃える(貪欲だと2行目が極端に短くなる)
     lines = auto_edit.wrap_lines("本日の主なニュースをお伝えします", 15)
     check(lines == ["本日の主なニュー", "スをお伝えします"],
@@ -139,7 +146,7 @@ def test_srt_roundtrip():
 
 
 def test_ass_build():
-    cfg = auto_edit.load_config(auto_edit.DEFAULT_CONFIG)
+    cfg = auto_edit.load_config(auto_edit.DEFAULT_CONFIG, "news")
     events = [TelopEvent(0.0, 2.0, "ニュース速報{}"), TelopEvent(2.0, 65.5, "二枚目")]
     ass = auto_edit.build_ass(events, cfg, 1920, 1080, 70.0, title_text="番組名",
                               font="TestFont")
@@ -171,7 +178,7 @@ def test_ass_build():
 
 def test_ass_gradient_band():
     """帯のグラデーションは矩形を下端まで重ねて作る(隣接だと継ぎ目に縞が出る)。"""
-    cfg = auto_edit.load_config(auto_edit.DEFAULT_CONFIG)
+    cfg = auto_edit.load_config(auto_edit.DEFAULT_CONFIG, "news")
     cfg["band"].update({"gradient": 0.3, "gradient_steps": 8, "opacity": 0.8})
     ass = auto_edit.build_ass([TelopEvent(0.0, 2.0, "帯")], cfg, 1920, 1080, 5.0,
                               font="TestFont")
@@ -204,6 +211,101 @@ def test_reading_speed():
     events = [TelopEvent(0.0, 20.0, "短い")]     # 上限6.5秒で頭打ち
     out = auto_edit.remap_events(events, keeps, 1.2, 6.5, 4.0)
     check(abs(out[0].end - 6.5) < 1e-6, f"最大表示時間が効いていない: {out[0].end}")
+
+
+def test_presets():
+    """preset で様式が切り替わる (business=座布団なし / talk,news=座布団あり)。"""
+    biz = auto_edit.load_config(auto_edit.DEFAULT_CONFIG, "business")
+    news = auto_edit.load_config(auto_edit.DEFAULT_CONFIG, "news")
+    talk = auto_edit.load_config(auto_edit.DEFAULT_CONFIG, "talk")
+    check(biz["band"]["enabled"] is False, "business preset で座布団が消えていない")
+    check(news["band"]["enabled"] is True, "news preset で座布団が出ていない")
+    check(talk["band"]["enabled"] is True, "talk preset で座布団が出ていない")
+    # マコなり社長系の実測値: 紺の縁取り + 太め
+    check(biz["style"]["outline_color"] == "294069", "business の縁取り色が想定外")
+    check(biz["style"]["outline_em"] > news["style"]["outline_em"],
+          "business の縁取りが news より太くない")
+    # 上書きしていない項目は元の値のまま残る
+    check(biz["encode"]["crf"] == news["encode"]["crf"], "preset適用で無関係な値が壊れた")
+    check(auto_edit.deep_merge({"a": {"x": 1, "y": 2}}, {"a": {"y": 9}}) ==
+          {"a": {"x": 1, "y": 9}}, "deep_mergeが想定外")
+
+    # 座布団なしのときは下端揃え(\an2)、ありのときは中央揃え(\an5)
+    ev = [TelopEvent(0.0, 2.0, "テスト")]
+    check("\\an2" in auto_edit.build_ass(ev, biz, 1920, 1080, 5.0, font="F"),
+          "座布団なしで下端揃えになっていない")
+    check("\\an5" in auto_edit.build_ass(ev, news, 1920, 1080, 5.0, font="F"),
+          "座布団ありで中央揃えになっていない")
+
+
+def test_emphasis():
+    """キーワード・数字・*囲み* が強調色になる。"""
+    cfg = {"emphasis": {"enabled": True, "color": "FFE14D",
+                        "auto_numbers": True, "keywords": ["圧倒的"]}}
+    runs = auto_edit.emphasis_runs("年収1000万円は圧倒的に少数です", cfg)
+    emph = [t for t, f in runs if f]
+    check("1000万円" in emph, f"数字+単位が強調されていない: {runs}")
+    check("圧倒的" in emph, f"キーワードが強調されていない: {runs}")
+    check("".join(t for t, _ in runs) == "年収1000万円は圧倒的に少数です",
+          f"本文が欠けている: {runs}")
+
+    runs = auto_edit.emphasis_runs("これは*ここだけ*強調", cfg)
+    check([t for t, f in runs if f] == ["ここだけ"], f"*囲み*が想定外: {runs}")
+    check("*" not in "".join(t for t, _ in runs), "マーカーが残っている")
+
+    # 改行はそのまま残り、強調は行ごとに閉じる
+    runs = auto_edit.emphasis_runs("1つ目\\N2つ目", cfg)
+    check(("\\N", False) in runs, f"改行が保持されていない: {runs}")
+
+    # enabled: false なら素通し
+    off = {"emphasis": {"enabled": False, "auto_numbers": True}}
+    check(auto_edit.emphasis_runs("100万円", off) == [("100万円", False)],
+          "emphasis無効時に強調されている")
+
+    # ASSに実際に色タグが乗る
+    cfg2 = auto_edit.load_config(auto_edit.DEFAULT_CONFIG, "business")
+    ass = auto_edit.build_ass([TelopEvent(0, 2, "年収1000万円です")], cfg2,
+                              1920, 1080, 5.0, font="F")
+    check(auto_edit.ass_color("FFE14D") in ass, "強調色がASSに出ていない")
+
+
+def test_speaker_band():
+    """「名前: 発言」で話者を判定し、座布団の色を話者ごとに変える。"""
+    speakers = {"株本": "FFD34D", "ゲスト": "7FD4FF"}
+    check(auto_edit.split_speaker("株本: そうですね", speakers) == ("株本", "そうですね"),
+          "話者の切り出しが想定外")
+    check(auto_edit.split_speaker("株本：全角コロン", speakers)[0] == "株本",
+          "全角コロンを扱えていない")
+    # 知らない名前は発言として扱う(誤爆防止)
+    check(auto_edit.split_speaker("結論: これです", speakers) == ("", "結論: これです"),
+          "未登録の名前を話者にしてしまっている")
+
+    cfg = auto_edit.load_config(auto_edit.DEFAULT_CONFIG, "talk")
+    cfg["speakers"] = speakers
+    ass = auto_edit.build_ass([TelopEvent(0, 2, "はい", "株本")], cfg,
+                              1920, 1080, 5.0, font="F")
+    check(auto_edit.ass_color("FFD34D") in ass, "話者色が座布団に反映されていない")
+
+
+def test_no_break_inside_number():
+    """「1000万円」「Live2D」が改行で割れない。"""
+    cases = [("上位3割の人だけが年収1000万円を超えているそうです", 18, "1000万円"),
+             ("Live2Dモデルの量産計画が明らかになりました", 15, "Live2D")]
+    for text, limit, token in cases:
+        lines = auto_edit.wrap_lines(text, limit)
+        check(any(token in line for line in lines),
+              f"{token} が改行で割れた: {lines}")
+        check(all(auto_edit.display_width(line) <= limit for line in lines),
+              f"最大幅を超えた: {lines}")
+
+
+def test_frame_padding():
+    """keep_padding_frames はfpsで秒に換算される(発話間2〜3フレーム)。"""
+    # 30fpsで2フレーム = 0.0667秒。前後に付くので発話間は約4フレーム分あく
+    pad = 2 / 30.0
+    keeps = auto_edit.build_keep_segments([(2.0, 4.0)], 6.0, pad, 0.0, 0.1)
+    check(abs(keeps[0][1] - (2.0 + pad)) < 1e-9 and abs(keeps[1][0] - (4.0 - pad)) < 1e-9,
+          f"フレーム換算の余白が想定外: {keeps}")
 
 
 def test_font_helpers():
@@ -318,6 +420,11 @@ def main() -> int:
     test_ass_build()
     test_ass_gradient_band()
     test_reading_speed()
+    test_presets()
+    test_emphasis()
+    test_speaker_band()
+    test_no_break_inside_number()
+    test_frame_padding()
     test_font_helpers()
     test_filter_script()
 

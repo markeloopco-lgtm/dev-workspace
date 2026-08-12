@@ -1,10 +1,17 @@
 # 自動編集 (ジェットカット + テロップ + BGM) の設定
 # 使い方は docs/06_auto_edit.md 参照。数値を変えたら render だけやり直せば反映される。
 
+# テロップの様式。ファイル末尾の presets: で中身を上書きしている
+#   business … マコなり社長系 (座布団なし・白文字に紺の太い縁取り・キーワード色替え)
+#   talk     … 年収チャンネル系 (対談向け。座布団を話者ごとに色分け・詰めたカット)
+#   news     … ニュース番組風 (画面下の帯 + 金のライン)
+preset: business
+
 jetcut:
   silence_threshold_db: -35   # これより小さい音を「無音」とみなす (声が切れるなら -40 へ)
   min_silence: 0.4            # この長さ(秒)以上続く無音だけカットする
   keep_padding: 0.08          # 発話区間の前後に残す余白(秒)。詰まりすぎるなら増やす
+  keep_padding_frames: null   # 余白をフレーム数で指定 (指定するとkeep_paddingより優先)
   join_gap: 0.15              # この間隔(秒)以下で隣接する発話区間はつなげる
   min_keep: 0.3               # これより短い発話区間はノイズとみなして捨てる
 
@@ -45,6 +52,20 @@ style:                        # ニュース番組風テロップの見た目 (1
   double_outline: false       # 二重縁取り (バラエティ寄り。ニュースはfalse推奨)
   double_outline_color: "FFFFFF"
   safe_margin_ratio: 0.05     # 左右のセーフマージン (画面端の詰まりを防ぐ)
+  position_ratio: 0.88        # 座布団なしのときの文字の下端位置 / 画面高さ
+
+emphasis:                     # キーワードだけ色を変える (ビジネス系YouTubeの定番)
+  enabled: true
+  color: "FFE14D"             # 強調色 (黄色)
+  outline_color: ""           # 強調部分の縁取り色。空なら通常と同じ
+  auto_numbers: true          # 数字+単位 (3割/1000万円/50%) を自動で強調
+  keywords: []                # 常に強調したい語。例: ["圧倒的", "結論"]
+  # 文字起こしSRTを手直しするとき *この書き方* で囲んだ部分も強調される
+
+speakers: {}                  # 対談向け: 話者ごとの色。SRTに「名前: 発言」と書くと効く
+  # 例)
+  #   株本: "FFD34D"
+  #   ゲスト: "7FD4FF"
 
 band:                         # テロップの下地 (座布団 / テロップベース)
   enabled: true
@@ -80,3 +101,70 @@ encode:
   crf: 18                     # libx264の画質 (小さいほど高画質・大容量)
   preset: veryfast
   audio_bitrate: 192k
+
+# ------------------------------------------------------------------ プリセット
+# 上の設定を様式ごとに上書きする。書いた項目だけが差し替わる。
+# 根拠にした調査は docs/06_auto_edit.md 末尾を参照。
+presets:
+
+  # マコなり社長系。フォントは源ノ角ゴシック Heavy、縁取りは紺 #294069。
+  # 座布団を使わず、太い縁取りと影だけで映像から浮かせる。
+  business:
+    jetcut:
+      min_silence: 0.25       # 短い間も積極的に詰める
+      keep_padding_frames: 2  # 発話の前後に残すのは2フレームだけ
+      join_gap: 0.12
+    telop:
+      max_chars_per_line: 18  # スマホ視聴前提でテレビより1行を長く
+      max_lines: 2
+      min_duration: 0.8
+    style:
+      font_candidates:
+        - Source Han Sans JP Heavy   # = 源ノ角ゴシック Heavy (Adobe Fonts名)
+        - Noto Sans JP Black         # 同じ設計の無料版
+        - Noto Sans CJK JP Black
+        - BIZ UDPGothic
+        - Meiryo
+      font_size_ratio: 0.075  # ニュースより大きく
+      outline_color: "294069" # 紺
+      outline_em: 0.11        # 太い縁取り
+      shadow_em: 0.06
+      shadow_opacity: 0.5
+      tracking_em: -0.03
+      position_ratio: 0.88
+    band:
+      enabled: false          # 座布団なし
+    emphasis:
+      enabled: true
+      color: "FFE14D"
+
+  # 年収チャンネル系。対談向けで、座布団の色で誰の発言か分かるようにする。
+  # 発声と発声の間は2〜3フレームまで詰めるのが特徴。
+  talk:
+    jetcut:
+      min_silence: 0.2
+      keep_padding_frames: 1.5  # 前後1.5フレーム → 発話間は約3フレーム
+      join_gap: 0.1
+      min_keep: 0.25
+    telop:
+      max_chars_per_line: 18
+      max_lines: 2
+      min_duration: 0.8
+    style:
+      font_size_ratio: 0.062
+      outline_color: "1A1A1A"
+      outline_em: 0.07
+      shadow_em: 0.05
+    band:
+      enabled: true
+      color: "1F2933"         # speakers: を設定すると話者ごとの色で上書きされる
+      opacity: 0.88
+      gradient: 0.0
+      accent_em: 0.0
+      fit_content: true
+    emphasis:
+      enabled: true
+      color: "FFE14D"
+
+  # ニュース番組風 (このファイルの既定値そのまま)
+  news: {}

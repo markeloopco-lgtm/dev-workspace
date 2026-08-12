@@ -57,11 +57,14 @@ export SEE_THROUGH_DIR=/path/to/see-through
 `inspect` で未分類レイヤーが出たら `configs/layer_mapping.yaml` にパターンを追記する。
 
 ```bash
-# 録画のニュース風自動編集 (無音カット+テロップ+BGM。要ffmpeg → docs/06)
+# 録画の自動編集 (無音カット+テロップ+BGM。要ffmpeg → docs/06)
 pip install -r requirements-autoedit.txt
-python scripts/auto_edit.py preview 録画.mp4 --title "番組名"   # 見た目を1枚確認
-python scripts/auto_edit.py run 録画.mp4 --bgm bgm.mp3 --title "番組名"
+python scripts/auto_edit.py preview 録画.mp4          # テロップの見た目を1枚確認
+python scripts/auto_edit.py run 録画.mp4 --bgm bgm.mp3
 ```
+
+テロップの様式は `--preset` で切り替える:
+`business`(ビジネス系YouTube・既定) / `talk`(対談・話者を色分け) / `news`(報道番組風)
 
 ## リポジトリ構成
 
@@ -72,13 +75,13 @@ python scripts/auto_edit.py run 録画.mp4 --bgm bgm.mp3 --title "番組名"
 | `docs/03_cubism_template_workflow.md` | Cubismテンプレート量産手順・チェックリスト |
 | `docs/04_aituber_runtime.md` | AITuber運用構成 (AITuberKit + Gemini + SBV2 + OBS) |
 | `docs/05_local_claude_code.md` | ローカルPCへの移行手順 (Claude Codeで続きを進める) |
-| `docs/06_auto_edit.md` | 録画のニュース風自動編集 (ジェットカット+テロップ+BGM) |
+| `docs/06_auto_edit.md` | 録画の自動編集 (ジェットカット+テロップ+BGM・様式プリセット) |
 | `CLAUDE.md` | ローカルClaude Code用の引き継ぎ書 (現状・残タスク・技術前提) |
 | `scripts/normalize_psd.py` | PSDレイヤー正規化 (inspect / normalize / PNG書き出し) |
 | `scripts/batch_decompose.py` | 分解→正規化の一括ドライバ |
 | `scripts/setup_aituber.sh` | AITuberKit導入・モデル組み込みヘルパー |
-| `scripts/auto_edit.py` | ニュース風自動編集 (run / preview / fonts / analyze / transcribe / render) |
-| `configs/auto_edit.yaml` | 自動編集の設定 (カットしきい値・テロップ様式・BGM) |
+| `scripts/auto_edit.py` | 自動編集 (run / preview / fonts / analyze / transcribe / render) |
+| `configs/auto_edit.yaml` | 自動編集の設定 (カットしきい値・テロップ様式プリセット・BGM) |
 | `assets/fonts/` | テロップ用フォントの置き場 (置くだけで使われる。DL手順は同梱README) |
 | `configs/layer_mapping.yaml` | レイヤー名マッピング定義 (育てる設定ファイル) |
 | `configs/aituberkit.env.example` | AITuberKit環境変数テンプレ (本構成向け・検証済み) |
