@@ -202,10 +202,10 @@ presets:
       join_gap: 0.06          # 2フレーム以下の間は切らずにつなぐ
       min_keep: 0.25
     telop:
-      # 文字を大きく見せるため、早めに2行へ折り返す。
-      # auto(幅いっぱい)にすると長い文ほど自動で縮んで小さくなる
+      # 2行にせず、必ず1行で出す。長い発言は折り返さずに
+      # 短いテロップへ分けて順に表示する(切り抜き動画でよくある見せ方)
       max_chars_per_line: 15
-      max_lines: 2
+      max_lines: 1
       min_duration: 0.7       # テンポが速いので短い表示も許す
       reading_speed: 5.0
     style:

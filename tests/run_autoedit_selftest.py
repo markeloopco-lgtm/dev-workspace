@@ -135,6 +135,36 @@ def test_wrap_and_split():
     check(out[0].end == out[1].start and out[0].start == 0.0, "按分が連続でない")
 
 
+def test_single_line_split():
+    """max_lines=1 のとき、語の途中で切らず文節の切れ目で分ける。"""
+    cfg = auto_edit.load_config(auto_edit.DEFAULT_CONFIG, "talk")
+    check(cfg["telop"]["max_lines"] == 1, "talk が1行設定になっていない")
+    limit = auto_edit.line_budget(cfg, 1920, 1080)
+
+    cases = [
+        ("前職ではどのくらいの年収でしたか", ["前職ではどのくらいの", "年収でしたか"]),
+        ("今日はエンジニアの転職について聞いていきます",
+         ["今日はエンジニアの", "転職について聞いていきます"]),
+        ("新卒で入った会社では、およそ380万円でした",
+         ["新卒で入った会社では、", "およそ380万円でした"]),
+    ]
+    for text, want in cases:
+        got = [e.text for e in auto_edit.split_telop(
+            TelopEvent(0, 5, text), limit, 1, True)]
+        check(got == want, f"分け方が想定外: {text} → {got}")
+
+    # 1行設定では行長を揃えない (揃えると語の途中で切れやすい)
+    check(auto_edit.wrap_lines("前職ではどのくらいの年収でしたか", limit,
+                               balance=False)[0] == "前職ではどのくらいの",
+          "balance=False が効いていない")
+
+    # 助詞の後ろでも、続きが漢字/カタカナでなければ切らない
+    check(auto_edit._natural_break("年収でした", 3) is False,
+          "「で/した」を切れ目と判定している")
+    check(auto_edit._natural_break("どのくらいの年収", 6) is True,
+          "「の/年収」を切れ目と判定していない")
+
+
 def test_srt_roundtrip():
     events = [TelopEvent(0.5, 2.25, "こんにちは"), TelopEvent(3.0, 4.5, "テスト")]
     text = auto_edit.format_srt(events)
@@ -701,6 +731,7 @@ def main() -> int:
     test_build_keep_segments()
     test_remap()
     test_wrap_and_split()
+    test_single_line_split()
     test_srt_roundtrip()
     test_ass_build()
     test_ass_gradient_band()

@@ -167,6 +167,22 @@ KINSOKU_HEAD = (
     "ーヽヾゝゞ々〜"
 )
 PUNCT_TAIL = "、。！？!?…,"           # ここで改行すると自然に読める文字
+# 助詞の後ろは文節の切れ目になりやすい。句読点が無い文を割るときの手がかり
+PARTICLES = "はがのをにでともやへ"
+CONTENT_HEAD = re.compile(r"[一-鿿々゠-ヿ]")  # 漢字・カタカナ
+
+
+def _natural_break(text: str, i: int) -> bool:
+    """text[i] の直前が文節の切れ目として自然か。
+
+    句読点の後ろは常に自然。助詞の後ろは、続きが漢字/カタカナ(内容語の頭)の
+    ときだけ自然とみなす。「〜の/年収」は切ってよいが「〜で/した」は切らない。
+    """
+    if i <= 0 or i >= len(text):
+        return False
+    if text[i - 1] in PUNCT_TAIL:
+        return True
+    return text[i - 1] in PARTICLES and bool(CONTENT_HEAD.match(text[i]))
 WORD_CHAR = re.compile(r"[0-9０-９A-Za-zＡ-Ｚａ-ｚ.%％]")  # 途中で切らない文字
 
 
@@ -210,6 +226,13 @@ def _wrap_greedy(text: str, max_chars: float) -> list:
                 back -= 1
             if back > 1:
                 cut = back
+            # 文節の切れ目まで少し戻れるなら、そこで切ると自然に読める
+            # (「前職ではどのくら/いの年収」→「前職ではどのくらいの/年収」)
+            limit_back = max(2, int(cut * 0.55))
+            for i in range(cut, limit_back - 1, -1):
+                if _natural_break(cur, i) and _can_break(cur, i, spans):
+                    cut = i
+                    break
             while cut < len(cur) and cur[cut] in KINSOKU_HEAD:  # 行頭禁則
                 cut += 1
             if cut >= len(cur):
@@ -241,15 +264,17 @@ def _balance_two(text: str, max_chars: float) -> list:
     return best[1] if best else None
 
 
-def wrap_lines(text: str, max_chars: float) -> list:
+def wrap_lines(text: str, max_chars: float, balance: bool = True) -> list:
     """テロップ1枚ぶんの文字列を行に折り返す。
 
     2行に収まる場合は行長を揃える。放送字幕は行長を揃えるのが基本で、
     貪欲に詰めると「15文字 + 3文字」のような不格好な2行目になるため。
+    ただし1行ずつ別のテロップとして出す場合は行長を揃える意味が無く、
+    かえって語の途中で切れやすくなるので balance=False で呼ぶ。
     """
     text = re.sub(r"\s+", " ", text.strip())
     lines = _wrap_greedy(text, max_chars)
-    if len(lines) == 2:
+    if balance and len(lines) == 2:
         balanced = _balance_two(text, max_chars)
         if balanced:
             lines = balanced
@@ -387,7 +412,7 @@ def split_telop(event: TelopEvent, max_chars: float, max_lines: int,
 
     行数が超える場合は文字数比で表示時間を按分した複数イベントにする。
     """
-    lines = wrap_lines(event.text, max_chars)
+    lines = wrap_lines(event.text, max_chars, balance=max_lines > 1)
     if not lines:
         return []
     chunks = [lines[i:i + max_lines] for i in range(0, len(lines), max_lines)]
@@ -719,6 +744,36 @@ def _round_rect(x0: float, y0: float, x1: float, y1: float, r: float) -> str:
             f"b {x0:.0f} {y0 + r - k:.0f} {x0 + r - k:.0f} {y0:.0f} {x0 + r:.0f} {y0:.0f}")
 
 
+_FONT_CACHE = {}
+
+
+def measure_text_width(text: str, font_name: str, font_size: float,
+                       spacing: float) -> float:
+    """行の表示幅(px)。同梱フォントがあればPillowで実測し、無ければ概算する。
+
+    実測できると、はみ出し防止の縮小や座布団の幅がフォント固有の字幅に
+    正確に追従する(Dela Gothic One のような字幅の広い書体でずれるため)。
+    """
+    path = dropin_font_files().get((font_name or "").lower())
+    if path:
+        key = (str(path), int(font_size))
+        if key not in _FONT_CACHE:
+            try:
+                from PIL import ImageFont
+                _FONT_CACHE[key] = ImageFont.truetype(str(path), int(font_size))
+            except Exception:      # Pillow が無い/読めない場合は概算にする
+                _FONT_CACHE[key] = None
+        font = _FONT_CACHE[key]
+        if font is not None:
+            widest = 0.0
+            for line in text.split("\\N"):
+                clean = line.replace("*", "")
+                widest = max(widest, font.getlength(clean)
+                             + spacing * max(0, len(clean) - 1))
+            return widest
+    return estimate_text_width(text, font_size, spacing)
+
+
 def estimate_text_width(text: str, font_size: float, spacing: float) -> float:
     """行の表示幅(px)を概算する。座布団をテキスト幅に合わせるのに使う。
 
@@ -903,9 +958,17 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             ratio = wrapped
         size = ratio * height * scene_of(ev)["scale"]
         avail = width * (1 - 2 * st["safe_margin_ratio"])
-        est = estimate_text_width(ev.text, size, spacing * size / fs)
-        if est > avail:
-            size *= avail / est
+        got = measure_text_width(ev.text, scene_of(ev)["font"], size,
+                                 spacing * size / fs)
+        if got > avail:
+            size *= avail / got
+            # 実測は文字サイズごとに変わるので、縮めたサイズで測り直す
+            got = measure_text_width(ev.text, scene_of(ev)["font"], size,
+                                     spacing * size / fs)
+            while got > avail and size > 10:
+                size -= 1
+                got = measure_text_width(ev.text, scene_of(ev)["font"], size,
+                                         spacing * size / fs)
         # ASSには整数で書き出すので、切り捨てておかないと丸めで幅を超えうる
         return float(max(10, int(size)))
 
@@ -946,7 +1009,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         if bd["enabled"]:
             # 座布団の左右: 全幅か、テキスト幅に合わせるか
             if bd.get("fit_width"):
-                half = (estimate_text_width(ev.text, ev_fs, spacing * size_scale) / 2
+                half = (measure_text_width(ev.text, scene_of(ev)["font"], ev_fs,
+                                           spacing * size_scale) / 2
                         + pad_x * size_scale)
                 x0, x1 = max(0.0, width / 2 - half), min(float(width), width / 2 + half)
             else:

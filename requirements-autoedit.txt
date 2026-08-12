@@ -2,3 +2,4 @@
 # ffmpeg本体はpipではなく別途インストール: winget install Gyan.FFmpeg
 faster-whisper>=1.0
 PyYAML
+Pillow  # テロップ幅の実測に使う (無くても概算で動く)
