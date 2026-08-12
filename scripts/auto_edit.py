@@ -351,6 +351,35 @@ def emphasis_runs(text: str, cfg: dict) -> list:
     return [(t, f) for t, f in runs if t]
 
 
+def auto_max_chars(cfg: dict, width: int, height: int, size_ratio: float) -> float:
+    """その文字サイズで1行に入る文字数(全角換算)を画面幅から求める。
+
+    日本語フォントは全角がちょうど1em幅なので、
+    使える幅 ÷ (文字サイズ + 字間) でほぼ正確に出せる。
+    """
+    st = cfg["style"]
+    fs = size_ratio * height
+    avail = width * (1 - 2 * st["safe_margin_ratio"])
+    advance = fs * (1 + st.get("tracking_em", 0))
+    return max(6.0, avail / advance)
+
+
+def line_budget(cfg: dict, width: int, height: int) -> float:
+    """1行に入れる文字数の上限(全角換算)。
+
+    auto のときは「2行にしたときの文字サイズ」で計算する。こうすると、
+    少しはみ出すだけの文なら文字を縮めて1行に収まり(横幅を使い切る)、
+    それより長いものだけが2行になる。1行を縮めても2行のときより
+    小さくはならないので、読みにくくならない。
+    """
+    st, tc = cfg["style"], cfg["telop"]
+    configured = tc.get("max_chars_per_line")
+    if not (configured is None or str(configured).lower() == "auto"):
+        return float(configured)
+    ratio = st.get("font_size_ratio_wrapped") or st["font_size_ratio"]
+    return auto_max_chars(cfg, width, height, ratio)
+
+
 def split_telop(event: TelopEvent, max_chars: float, max_lines: int,
                 strip_period: bool = True) -> list:
     """1つの文字起こし区間を「max_lines行までのテロップ」列に分割する。
@@ -1043,10 +1072,11 @@ def transcribe(input_path: Path, cfg: dict) -> list:
 def make_telop_events(raw_events: list, plan: dict, cfg: dict) -> list:
     tc = cfg["telop"]
     keeps = [tuple(seg) for seg in plan["keep_segments"]]
+    limit = line_budget(cfg, plan["width"], plan["height"])
     split = []
     for ev in raw_events:
         ev = prepare_event(ev, cfg)  # 「名前:」で話者、行頭「!」でツッコミ扱い
-        split.extend(split_telop(ev, tc["max_chars_per_line"], tc["max_lines"],
+        split.extend(split_telop(ev, limit, tc["max_lines"],
                                  tc["strip_trailing_period"]))
     return remap_events(split, keeps, tc["min_duration"],
                         tc.get("max_duration"), tc.get("reading_speed"))
@@ -1184,7 +1214,8 @@ def cmd_preview(args) -> int:
     raw = args.text or SAMPLE_TELOP
     # 本番と同じ折り返し・話者判定を通す(プレビューと仕上がりを一致させる)
     prepared = prepare_event(TelopEvent(0.0, 5.0, raw), cfg)
-    events = split_telop(prepared, tc["max_chars_per_line"], tc["max_lines"],
+    limit = line_budget(cfg, width, height)
+    events = split_telop(prepared, limit, tc["max_lines"],
                          tc["strip_trailing_period"]) or [TelopEvent(0.0, 5.0, raw)]
     title = args.title if args.title is not None else cfg["title"]["text"]
     font = resolve_font(cfg)

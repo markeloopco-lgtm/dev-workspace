@@ -421,6 +421,39 @@ def test_emphasis():
     check(auto_edit.ass_color("FFE14D") in ass, "強調色がASSに出ていない")
 
 
+def test_line_budget():
+    """max_chars_per_line: auto は画面幅から1行の文字数を決める。"""
+    cfg = auto_edit.load_config(auto_edit.DEFAULT_CONFIG, "talk")
+    st = cfg["style"]
+    check(str(cfg["telop"]["max_chars_per_line"]).lower() == "auto",
+          "talk が auto になっていない")
+    budget = auto_edit.line_budget(cfg, 1920, 1080)
+
+    # 上限ぴったりの1行が、左右マージンの内側にちょうど収まる
+    fs = st["font_size_ratio_wrapped"] * 1080
+    got = auto_edit.estimate_text_width("あ" * int(budget), fs, st["tracking_em"] * fs)
+    avail = 1920 * (1 - 2 * st["safe_margin_ratio"])
+    check(got <= avail + 1, f"上限まで入れると幅を超える: {got:.0f} > {avail:.0f}")
+    check(got > avail * 0.9, f"幅を使い切れていない: {got:.0f} / {avail:.0f}")
+
+    # 少しはみ出す程度の文は、折り返さず1行のまま(文字が縮んで収まる)
+    text = "あ" * (int(budget) - 1)
+    check(len(auto_edit.wrap_lines(text, budget)) == 1,
+          "1行に収まるはずの文が折り返された")
+    check(len(auto_edit.wrap_lines("あ" * (int(budget) + 6), budget)) == 2,
+          "長すぎる文が2行になっていない")
+
+    # 解像度が変わっても文字数の上限は同じ (比率で決めているため)
+    check(abs(auto_edit.line_budget(cfg, 1280, 720) - budget) < 0.5,
+          "解像度で1行の文字数が変わってしまう")
+
+    # 数値指定ならその値がそのまま使われる
+    fixed = copy.deepcopy(cfg)
+    fixed["telop"]["max_chars_per_line"] = 12
+    check(auto_edit.line_budget(fixed, 1920, 1080) == 12.0,
+          "数値指定が尊重されていない")
+
+
 def test_line_spacing():
     """行間はフォント任せにせず line_height_em どおりに自前で置く。"""
     cfg = auto_edit.load_config(auto_edit.DEFAULT_CONFIG, "talk")
@@ -605,6 +638,7 @@ def main() -> int:
     test_wrapped_font_size()
     test_round_rect()
     test_emphasis()
+    test_line_budget()
     test_line_spacing()
     test_speaker_band()
     test_no_break_inside_number()

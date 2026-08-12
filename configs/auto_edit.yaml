@@ -21,6 +21,7 @@ telop:
   device: auto                # auto/cpu/cuda。CUDAで失敗したら自動でCPUに切り替わる
   compute_type: int8          # VRAM 4GB・CPUでも動く省メモリ設定
   # 放送の字幕基準: 1行13〜15.5文字・最大2行・2秒以上6.5秒以下・毎秒約4文字
+  # auto = 画面幅と文字サイズから「入るだけ」入れる (横幅を使い切る)
   max_chars_per_line: 15
   max_lines: 2
   min_duration: 1.2           # テロップの最低表示時間(秒)
@@ -53,7 +54,7 @@ style:                        # ニュース番組風テロップの見た目 (1
   blur: 0.0                   # 縁と影のぼかし量(px)。0でくっきり
   double_outline: false       # 二重縁取り (バラエティ寄り。ニュースはfalse推奨)
   double_outline_color: "FFFFFF"
-  safe_margin_ratio: 0.05     # 左右のセーフマージン (画面端の詰まりを防ぐ)
+  safe_margin_ratio: 0.04     # 左右のセーフマージン (画面端の詰まりを防ぐ)
   position_ratio: 0.88        # 座布団なしのときの文字の下端位置 / 画面高さ
 
 emphasis:                     # キーワードだけ色を変える (ビジネス系YouTubeの定番)
@@ -147,7 +148,7 @@ presets:
       keep_padding_frames: 2  # 発話の前後に残すのは2フレームだけ
       join_gap: 0.12
     telop:
-      max_chars_per_line: 18  # スマホ視聴前提でテレビより1行を長く
+      max_chars_per_line: auto  # 画面幅いっぱいまで入れる
       max_lines: 2
       min_duration: 0.8
     style:
@@ -185,7 +186,7 @@ presets:
       join_gap: 0.06          # 2フレーム以下の間は切らずにつなぐ
       min_keep: 0.25
     telop:
-      max_chars_per_line: 16  # 全発言をテロップ化する前提で1行を短めに
+      max_chars_per_line: auto  # 画面幅いっぱいまで入れる
       max_lines: 2
       min_duration: 0.7       # テンポが速いので短い表示も許す
       reading_speed: 5.0
