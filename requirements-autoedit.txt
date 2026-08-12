@@ -1,0 +1,4 @@
+# 自動編集 (scripts/auto_edit.py) 用の追加依存 — 使い方は docs/06_auto_edit.md
+# ffmpeg本体はpipではなく別途インストール: winget install Gyan.FFmpeg
+faster-whisper>=1.0
+PyYAML

@@ -22,6 +22,10 @@ Cubism Editor でテンプレート適用       ← docs/03
 AITuberKitで自動運用配信               ← docs/04
    Geminiチャット応答 + Style-Bert-VITS2発話
    + Live2Dリップシンク + OBS→YouTube
+  │
+  ▼
+録画をニュース風に自動編集             ← docs/06 (このリポジトリ・無料)
+   ジェットカット + テロップ + BGM
 ```
 
 ## セットアップ
@@ -52,6 +56,12 @@ export SEE_THROUGH_DIR=/path/to/see-through
 
 `inspect` で未分類レイヤーが出たら `configs/layer_mapping.yaml` にパターンを追記する。
 
+```bash
+# 録画のニュース風自動編集 (無音カット+テロップ+BGM。要ffmpeg → docs/06)
+pip install -r requirements-autoedit.txt
+python scripts/auto_edit.py run 録画.mp4 --bgm bgm.mp3 --title "番組名"
+```
+
 ## リポジトリ構成
 
 | パス | 内容 |
@@ -61,14 +71,18 @@ export SEE_THROUGH_DIR=/path/to/see-through
 | `docs/03_cubism_template_workflow.md` | Cubismテンプレート量産手順・チェックリスト |
 | `docs/04_aituber_runtime.md` | AITuber運用構成 (AITuberKit + Gemini + SBV2 + OBS) |
 | `docs/05_local_claude_code.md` | ローカルPCへの移行手順 (Claude Codeで続きを進める) |
+| `docs/06_auto_edit.md` | 録画のニュース風自動編集 (ジェットカット+テロップ+BGM) |
 | `CLAUDE.md` | ローカルClaude Code用の引き継ぎ書 (現状・残タスク・技術前提) |
 | `scripts/normalize_psd.py` | PSDレイヤー正規化 (inspect / normalize / PNG書き出し) |
 | `scripts/batch_decompose.py` | 分解→正規化の一括ドライバ |
 | `scripts/setup_aituber.sh` | AITuberKit導入・モデル組み込みヘルパー |
+| `scripts/auto_edit.py` | ニュース風自動編集 (run / analyze / transcribe / render) |
+| `configs/auto_edit.yaml` | 自動編集の設定 (カットしきい値・テロップ様式・BGM) |
 | `configs/layer_mapping.yaml` | レイヤー名マッピング定義 (育てる設定ファイル) |
 | `configs/aituberkit.env.example` | AITuberKit環境変数テンプレ (本構成向け・検証済み) |
 | `notebooks/see_through_free_gpu.ipynb` | See-throughをKaggle/Colab無料GPU枠で回すノートブック |
-| `tests/run_selftest.py` | ラウンドトリップ検証 (GPU不要) |
+| `tests/run_selftest.py` | PSD正規化のラウンドトリップ検証 (GPU不要) |
+| `tests/run_autoedit_selftest.py` | 自動編集の検証 (ffmpegがあれば合成動画で統合検証) |
 
 ## 実装メモ
 
