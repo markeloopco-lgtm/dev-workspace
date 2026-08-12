@@ -208,17 +208,20 @@ presets:
       reading_speed: 5.0
     style:
       font_candidates:
-        # 源ノ角ゴシック Heavy 系。日本語の動画編集で最も広く使われている
-        - Source Han Sans JP Heavy   # Adobe Fonts の名前
-        - Noto Sans JP Black         # 同設計の無料版 (fetch_fonts.py で取得)
+        # Dela Gothic One (Google Fonts・無料)。極太のインパクト系で、
+        # 海外の切り抜き動画で使われる Anton などに近い性格
+        - Dela Gothic One
+        - Noto Sans JP Black         # 未取得のときの控え
         - Noto Sans JP
         - Noto Sans CJK JP Black
         - BIZ UDPGothic              # Windows標準。何も入れなくても動く
         - Meiryo
+      # Dela Gothic One は元から極太なので太字を掛けない (掛けると字が潰れる)
+      bold: false
       # 1行のときは大きく見せ、2行になったら収まるサイズに切り替える
-      # (UDゴシックは字面が大きいので、この比率でも十分大きく見える)
-      font_size_ratio: 0.080
-      font_size_ratio_wrapped: 0.064
+      # (Dela Gothic One は字面が大きく幅も広いので、やや控えめの比率)
+      font_size_ratio: 0.076
+      font_size_ratio_wrapped: 0.062
       text_color: "FFFFFF"
       outline_color: "10161C" # 座布団なしで映像に直接乗るので縁は太めに
       outline_em: 0.095
@@ -248,8 +251,8 @@ presets:
         font_candidates: [Yusei Magic, Rounded Mplus 1c ExtraBold]
       point:
         mark: "#"
-        scale: 1.10
-        font_candidates: [Dela Gothic One]
+        scale: 1.12
+        font_candidates: []   # 本文が Dela なので拡大だけで差をつける
       question:
         mark: "?"
         auto: question

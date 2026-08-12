@@ -256,14 +256,18 @@ python scripts/auto_edit.py fonts
 
 | 優先順 | フォント | 入手 |
 |---|---|---|
-| 1 | **源ノ角ゴシック Heavy**（Source Han Sans JP Heavy） | Adobe Fonts。契約していれば自動で使われる |
-| 2 | **Noto Sans JP Black** | 上と同設計の無料版。`python scripts/fetch_fonts.py get ゴシック太` で取得 |
+| 1 | **Dela Gothic One** | Google Fonts（無料・商用可）。`python scripts/fetch_fonts.py get インパクト` |
+| 2 | Noto Sans JP Black | 源ノ角ゴシック Heavy と同設計の無料版 |
 | 3 | BIZ UDPGothic | Windows 10/11 標準（DL不要のフォールバック） |
 | 4 | メイリオ / 游ゴシック | Windows 標準 |
 
-既定は **源ノ角ゴシック Heavy 系**。動画編集の実務で最も広く使われている書体で、
-「ゴシック体は動画では必須」と複数の実務者が挙げている（出典は末尾）。
-Adobe Fonts を契約していなくても、無料版の Noto Sans JP Black を入れれば同じ見た目になる。
+既定は **Dela Gothic One**。極太のインパクト系で、海外の切り抜き動画で定番の
+Anton / Montserrat ExtraBold に近い性格の日本語書体。
+
+**元から極太の書体には太字を掛けないこと**（`style.bold: false`）。掛けると
+二重掛けになって字が潰れる。`bold: auto` は書体のウェイト情報から自動判定するが、
+Dela Gothic One のようにウェイト値が 400 のまま見た目が極太な書体は判定できないので、
+preset 側で明示的に `false` にしている。
 
 **同梱フォントは「ウェイト固有名」で指定される**（例: `Noto Sans JP` ではなく
 `Noto Sans JP Black`）。総称名のまま渡すと、システムに同系統の別フォントがある場合に
