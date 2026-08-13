@@ -26,6 +26,7 @@
 
 - `docs/01〜05`: 工程順のドキュメント（発注仕様→See-through→Cubism→AITuber運用→ローカル移行）
 - `docs/writing_guide.md`: 人に読ませる文章の書き方・構成の汎用ガイド（告知文・概要欄・ドキュメント作成時に参照）
+- `docs/writing_guide_story.md`: 物語調で感情を動かし行動変容につなげる構成ガイド（キャラ設定・note・告知に使う）
 - `scripts/normalize_psd.py`: PSDレイヤー正規化（inspect / normalize）。GPU不要
 - `scripts/batch_decompose.py`: 一括処理（`--normalize-only` はローカルで使う）
 - `configs/layer_mapping.yaml`: See-through V3実タグ体系に較正済み（ソース調査で検証）
