@@ -22,6 +22,15 @@
 - [ ] Gemini APIキー・YouTube Data API v3キーの取得誘導 → .env設定
 - [ ] OBS設定（クロマキー）→ テスト配信
 
+## 併設プロジェクト: youtube-ops/（YouTube多チャンネル運用）
+
+Live2D/AITuberパイプラインとは独立した別プロジェクト。複数YouTubeチャンネルの
+投稿・分析・改善をGoogleスプレッドシート＋GASで一元管理するシステム。
+
+- コード: `youtube-ops/src/*.gs`（Google Apps Script。tests/run_selftest.pyの対象外）
+- ドキュメント: `youtube-ops/README.md` と `youtube-ops/docs/01〜03`
+- Slack通知は未実装（`src/11_notify.gs` にフックのみ。ユーザーの指示で保留中）
+
 ## リポジトリ構成
 
 - `docs/01〜05`: 工程順のドキュメント（発注仕様→See-through→Cubism→AITuber運用→ローカル移行）
