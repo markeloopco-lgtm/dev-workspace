@@ -1,0 +1,32 @@
+# クリップ003: Evil Neuro & Vedal の VRChat回(コメディ系)
+# 2026-04-20 公式VOD。妹分Evil Neuroの毒舌×VedalのツッコミはJP未開拓の切り口。
+# ※このクリップは「先に書き起こしを取る」運用:
+#   1) `make_clip.ps1 003` を実行 → アンカー未設定なので transcript.txt だけ出力される
+#   2) transcript.txt をClaudeに貼り付け → 面白い区間の選定と translation.yaml を作成
+#   3) もう一度 `make_clip.ps1 003` → 完成
+id: "003"
+genre: コメディ系
+
+source:
+  url: https://www.youtube.com/watch?v=gq_-lJuhh4c
+  expected_channel: Neuro-sama
+  note: 公式VOD「20 Apr 2026 | Vedal & Evil in VRChat (Just Chatting)」
+
+window:
+  start: null
+  end: null
+  lead: 4
+  tail: 4
+
+style:
+  font: "Noto Sans CJK JP"
+
+upload:
+  title: 【日本語字幕】AIの妹、VRChatで自由すぎて創造主が壊れる【Evil Neuro切り抜き】
+  description: |
+    Neuro-samaの妹分・Evil Neuro(イービル)がVedalとVRChatへ。
+    姉より口が悪くて自由なAIに、開発者のツッコミが追いつきません。
+
+    #Neurosama #EvilNeuro #ネウロ様 #Vedal #Vtuber切り抜き #日本語翻訳
+  tags: [Evil Neuro, Neuro-sama, ネウロ様, Vedal, VRChat, Vtuber切り抜き, 日本語翻訳]
+  thumbnail_text: AI妹、自由すぎ

@@ -1,0 +1,29 @@
+# クリップ002: ハイプトレイン世界記録 Lv126(お祭り系)
+# 2026-01-04 サバソン中に Twitch ハイプトレイン世界記録を3度目の更新(Lv126 / 約126,000サブ)
+id: "002"
+genre: お祭り系
+
+source:
+  url: https://www.youtube.com/watch?v=fceSH3i36dA
+  expected_channel: Neuro-sama
+  note: 公式ハイライト「Even Funnier The 3rd Time | Subathon Highlights」
+
+window:
+  start: null
+  end: null
+  lead: 8
+  tail: 6
+
+style:
+  font: "Noto Sans CJK JP"
+
+upload:
+  title: 【日本語字幕】Twitch世界記録を塗り替えた夜、AIが残した言葉に鳥肌【Neuro-sama切り抜き】
+  description: |
+    2026年1月、AI VTuberのNeuro-sama(ネウロ様)がTwitchハイプトレイン世界記録を
+    自身3度目の更新(レベル126・約12.6万サブスク・推定1.5億円規模)。
+    お祭り騒ぎの最後にAIが語った言葉と、我に返った開発者Vedalの一言をどうぞ。
+
+    #Neurosama #ネウロ様 #Vedal #Vtuber切り抜き #日本語翻訳 #Twitch
+  tags: [Neuro-sama, ネウロ様, Vedal, ハイプトレイン, 世界記録, Vtuber切り抜き, 日本語翻訳]
+  thumbnail_text: 世界記録、3度目。

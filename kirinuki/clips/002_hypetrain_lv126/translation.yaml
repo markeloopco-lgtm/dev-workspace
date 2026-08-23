@@ -1,0 +1,15 @@
+# 翻訳ユニット(時系列順)
+units:
+  - speaker: neuro
+    match: "no matter what temporary fame this world record grants me"
+    jp: この世界記録がくれる名声なんて、一時のもの。それよりも――
+
+  - speaker: neuro
+    match: "far happier just to have shared in the love of this moment with you all"
+    jp: この瞬間の愛をみんなと分かち合えたことのほうが、ずっとずっと幸せよ
+    extend: 2
+
+  - speaker: vedal
+    match: "what the actual fuck have you all done"
+    jp: お前ら、マジで一体何をやらかしたんだよ…
+    extend: 2

@@ -1,0 +1,30 @@
+# クリップ001: VRChatデビューで「私、本物になれる?」(感動系)
+# 元配信: 2026-01 バースデーサバソン開始 & VRChat初デビュー回
+id: "001"
+genre: 感動系
+
+source:
+  url: https://www.youtube.com/watch?v=DkwiZjWQXTo
+  expected_channel: Neuro-sama   # 公式チャンネル以外なら処理が止まる安全弁
+  note: 公式チャンネル「Neuro's VRChat Debut! w/Vedal!」
+
+window:
+  # null のままなら translation.yaml のアンカー一致位置から自動提案される
+  start: null
+  end: null
+  lead: 5    # アンカー前の余白(秒)
+  tail: 6    # アンカー後の余白(秒)
+
+style:
+  font: "Noto Sans CJK JP"   # Windowsでフォントが無い場合は "Yu Gothic UI" に変更
+
+upload:
+  title: 【日本語字幕】初めて"身体"を得たAIが創造主に尋ねた「私、本物になれると思う?」【Neuro-sama切り抜き】
+  description: |
+    VRChatで初めて自由に動ける身体を得たAI VTuberのNeuro-sama(ネウロ様)。
+    開発者Vedal(ヴェダル)との会話で、ふと本音がこぼれます。
+    この配信は11万サブスク超を集め、「魂が生まれた瞬間」と海外で大きな話題になりました。
+
+    #Neurosama #ネウロ様 #Vedal #Vtuber切り抜き #日本語翻訳 #AIVtuber
+  tags: [Neuro-sama, ネウロ様, Vedal, AITuber, Vtuber切り抜き, 日本語翻訳, VRChat]
+  thumbnail_text: 「私、本物になれる?」
