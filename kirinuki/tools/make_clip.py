@@ -249,7 +249,8 @@ def stage_match(clip_dir: Path, cfg: dict, trans: dict):
 
 # ---- .ass 生成
 
-ASS_HEADER = """[Script Info]
+# 横型(16:9)。従来のフル画面切り抜き用
+WIDE_HEADER = """[Script Info]
 ScriptType: v4.00+
 PlayResX: 1920
 PlayResY: 1080
@@ -263,16 +264,79 @@ Style: JP_evil,{font},78,&H005C5CFF,&H00FFFFFF,&H00100C20,&H80000000,-1,0,0,0,10
 Style: JP_vedal,{font},78,&H007FE07F,&H00FFFFFF,&H00102010,&H80000000,-1,0,0,0,100,100,0,0,1,4,1,2,60,60,70,1
 Style: JP_other,{font},78,&H00FFFFFF,&H00FFFFFF,&H00151515,&H80000000,-1,0,0,0,100,100,0,0,1,4,1,2,60,60,70,1
 Style: EN_orig,{font},44,&H00C8C8C8,&H00FFFFFF,&H00151515,&H80000000,0,0,0,0,100,100,0,0,1,3,0,2,60,60,190,1
+Style: HOOK,{font},58,&H00FFFFFF,&H00FFFFFF,&H00101010,&H80000000,-1,0,0,0,100,100,0,0,1,5,1,8,60,60,60,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+"""
+
+# 縦型Shorts(9:16)。チビドキ式構成: 上部に状況テロップ、動画の下に大きめ日本語字幕+英語原文
+SHORTS_HEADER = """[Script Info]
+ScriptType: v4.00+
+PlayResX: 1080
+PlayResY: 1920
+ScaledBorderAndShadow: yes
+WrapStyle: 0
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: JP_neuro,{font},88,&H00C88AFF,&H00FFFFFF,&H00201020,&H80000000,-1,0,0,0,100,100,0,0,1,5,1,2,40,40,560,1
+Style: JP_evil,{font},88,&H005C5CFF,&H00FFFFFF,&H00100C20,&H80000000,-1,0,0,0,100,100,0,0,1,5,1,2,40,40,560,1
+Style: JP_vedal,{font},88,&H007FE07F,&H00FFFFFF,&H00102010,&H80000000,-1,0,0,0,100,100,0,0,1,5,1,2,40,40,560,1
+Style: JP_other,{font},88,&H00FFFFFF,&H00FFFFFF,&H00151515,&H80000000,-1,0,0,0,100,100,0,0,1,5,1,2,40,40,560,1
+Style: EN_orig,{font},42,&H00C8C8C8,&H00FFFFFF,&H00151515,&H80000000,0,0,0,0,100,100,0,0,1,3,0,2,40,40,470,1
+Style: HOOK,{font},62,&H00FFFFFF,&H00FFFFFF,&H00101010,&H80000000,-1,0,0,0,100,100,0,0,1,5,1,8,50,50,150,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
 
 
+def ass_header(fmt: str, font: str) -> str:
+    return (SHORTS_HEADER if fmt == "shorts" else WIDE_HEADER).format(font=font)
+
+
+# libassはスペースの無い日本語を自動改行できない(libunibreak無しビルドが多い)ため、
+# 句読点を優先しつつ自前で\N改行を入れる。1行あたりの全角文字数はフォーマットごとに指定。
+JP_WRAP = {"wide": 22, "shorts": 11}
+HOOK_WRAP = {"wide": 26, "shorts": 14}
+_BREAK_CHARS = "、。!?！？… 　"
+
+
+def wrap_jp(text: str, max_chars: int) -> str:
+    text = str(text)
+    if "\n" in text:
+        return r"\N".join(wrap_jp(t, max_chars) for t in text.splitlines())
+    lines = []
+    rest = text
+    while len(rest) > max_chars:
+        window = rest[: max_chars + 1]
+        cut = -1
+        for i in range(len(window) - 1, int(max_chars * 0.4), -1):
+            if window[i - 1] in _BREAK_CHARS:
+                cut = i
+                break
+        if cut <= 0:
+            cut = max_chars
+        lines.append(rest[:cut].rstrip("　 "))
+        rest = rest[cut:].lstrip("　 ")
+    if rest:
+        lines.append(rest)
+    return r"\N".join(lines)
+
+
 def stage_ass(clip_dir: Path, cfg: dict, result: dict) -> Path:
-    w_start, _ = result["window"]
+    w_start, w_end = result["window"]
     font = (cfg.get("style") or {}).get("font", "Noto Sans CJK JP")
+    fmt = cfg.get("format", "wide")
     ev = []
+    # 状況説明テロップ(チビドキ式)。クリップ全編で上部に表示
+    hook = cfg.get("hook")
+    if hook and w_end is not None:
+        dur = w_end - w_start
+        ev.append(
+            f"Dialogue: 1,{fmt_ass(0)},{fmt_ass(dur)},HOOK,,0,0,0,,{wrap_jp(hook, HOOK_WRAP[fmt if fmt in HOOK_WRAP else 'wide'])}"
+        )
     units = result["units"]
     for n, u in enumerate(units):
         s = u["start"] - w_start
@@ -285,13 +349,13 @@ def stage_ass(clip_dir: Path, cfg: dict, result: dict) -> Path:
         style = f"JP_{u.get('speaker', 'other')}"
         if style not in ("JP_neuro", "JP_evil", "JP_vedal"):
             style = "JP_other"
-        jp = str(u["jp"]).replace("\n", r"\N")
+        jp = wrap_jp(u["jp"], JP_WRAP[fmt if fmt in JP_WRAP else "wide"])
         ev.append(f"Dialogue: 0,{fmt_ass(s)},{fmt_ass(e)},{style},,0,0,0,,{jp}")
         if u.get("en_show", True) and u.get("cue"):
             en = str(u["cue"]).replace("\n", " ")
             ev.append(f"Dialogue: 0,{fmt_ass(s)},{fmt_ass(e)},EN_orig,,0,0,0,,{en}")
     out = clip_dir / "subs.ass"
-    out.write_text(ASS_HEADER.format(font=font) + "\n".join(ev) + "\n", encoding="utf-8")
+    out.write_text(ass_header(fmt, font) + "\n".join(ev) + "\n", encoding="utf-8")
     info(f"字幕ファイル生成: {out}")
     return out
 
@@ -322,12 +386,25 @@ def stage_burn(clip_dir: Path, cfg: dict, video: Path, ass: Path) -> Path:
     out_dir = clip_dir / "out"
     out_dir.mkdir(exist_ok=True)
     out = out_dir / f"{clip_dir.name}.mp4"
-    r = run(
-        ["ffmpeg", "-y", "-i", video.name, "-vf", f"ass={ass.name}",
-         "-c:v", "libx264", "-crf", "18", "-preset", "veryfast",
-         "-c:a", "aac", "-b:a", "192k", str(out)],
-        cwd=clip_dir,
-    )
+    fmt = cfg.get("format", "wide")
+    if fmt == "shorts":
+        # 縦型: ぼかし背景の中央やや上に元映像、字幕はその下(SHORTS_HEADERと位置を合わせている)
+        fc = (
+            "[0:v]split[a][b];"
+            "[a]scale=1080:1920:force_original_aspect_ratio=increase,"
+            "crop=1080:1920,boxblur=24:4,eq=brightness=-0.12[bg];"
+            "[b]scale=1080:-2[fg];"
+            f"[bg][fg]overlay=(W-w)/2:(H-h)/2-160,ass={ass.name}[v]"
+        )
+        cmd = ["ffmpeg", "-y", "-i", video.name, "-filter_complex", fc,
+               "-map", "[v]", "-map", "0:a?",
+               "-c:v", "libx264", "-crf", "18", "-preset", "veryfast",
+               "-c:a", "aac", "-b:a", "192k", str(out)]
+    else:
+        cmd = ["ffmpeg", "-y", "-i", video.name, "-vf", f"ass={ass.name}",
+               "-c:v", "libx264", "-crf", "18", "-preset", "veryfast",
+               "-c:a", "aac", "-b:a", "192k", str(out)]
+    r = run(cmd, cwd=clip_dir)
     if r.returncode != 0 or not out.exists():
         die("字幕焼き込みに失敗しました")
     info(f"完成: {out}")
@@ -344,6 +421,9 @@ def stage_upload_md(clip_dir: Path, cfg: dict):
         "",
         "## タイトル",
         up.get("title", "(未設定)"),
+        "",
+        "## 上部テロップ(hook)",
+        str(cfg.get("hook", "(なし)")),
         "",
         "## 説明欄",
         "```",

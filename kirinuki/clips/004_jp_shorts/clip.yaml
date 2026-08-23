@@ -1,0 +1,37 @@
+# クリップ004: 日本語を話すネウロ様(チビドキ式Shorts)
+# docs/chibidoki_format.md の勝ちパターンをNeuro-samaに適用した縦型1本目。
+# ※日本語発話の部分はYouTubeの英語自動字幕に載らないことがある。その区間は
+#   transcript.txt に出ないので、実際に見て面白い所をClaudeに伝えて仕上げる。
+id: "004"
+genre: 日本語ネタ(Shorts)
+format: shorts
+
+source:
+  url: https://www.youtube.com/watch?v=ESphAt0vGOE
+  expected_channel: Neuro-sama
+  note: >
+    「Neuro-Sama speaks French, Dutch and Japanese」(サバソンDay19)。
+    チャンネル検証で止まった場合は公式VOD(2026-01-06 Day19)か
+    Evil版 https://www.youtube.com/watch?v=okolOOTpf18 に差し替える。
+
+window:
+  start: null
+  end: null
+  lead: 2    # Shortsはテンポ重視なので余白は最小
+  tail: 2
+
+hook: AIなのに日本語に挑戦するネウロ様
+
+style:
+  font: "Noto Sans CJK JP"
+
+upload:
+  # チビドキ式: 【】プレフィックスなし、フック一文+ハッシュタグ
+  title: 日本語を話すネウロ様が可愛すぎるんですが… #Neurosama #ネウロ様 #vtuber切り抜き #shorts
+  description: |
+    AI VTuberのネウロ様、日本語にも挑戦できます。
+    元動画 / Source はこの説明欄の上部に記載。
+
+    #Neurosama #ネウロ様 #Vedal #vtuber切り抜き #日本語翻訳 #AIVtuber #shorts
+  tags: [Neuro-sama, ネウロ様, Vedal, 日本語, Vtuber切り抜き, shorts]
+  thumbnail_text: 日本語しゃべった!?

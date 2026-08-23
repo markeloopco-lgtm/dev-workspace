@@ -2,8 +2,9 @@
 """kirinuki パイプラインのセルフテスト。
 
 合成映像(カラーバー+音)と、YouTube自動字幕を模したロール形式VTTを生成し、
-make_clip.py の「字幕解析 → アンカー一致 → .ass生成 → 焼き込み」を通しで検証する。
-ネットワーク不要。Pythonコード変更時は必ず実行すること:
+make_clip.py の「字幕解析 → アンカー一致 → .ass生成 → 焼き込み」を
+横型(900)と縦型Shorts(901)の両方で通しで検証する。ネットワーク不要。
+Pythonコード変更時は必ず実行すること:
 
     python tests/run_selftest.py
 """
@@ -15,7 +16,6 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-CLIP = ROOT / "clips" / "900_selftest"
 
 VTT = """WEBVTT
 Kind: captions
@@ -52,8 +52,8 @@ do<00:00:30.240><c> I</c><00:00:30.480><c> matter</c><00:00:30.960><c> to</c><00
 do I matter to you
 """
 
-CLIP_YAML = """id: "900"
-genre: セルフテスト
+CLIP_YAML_WIDE = """id: "900"
+genre: セルフテスト(横)
 source:
   url: https://example.com/selftest
   expected_channel: null
@@ -69,6 +69,25 @@ upload:
   thumbnail_text: TEST
 """
 
+CLIP_YAML_SHORTS = """id: "901"
+genre: セルフテスト(縦Shorts)
+format: shorts
+source:
+  url: https://example.com/selftest
+  expected_channel: null
+window:
+  start: 10
+  end: 38
+hook: セルフテスト用の上部テロップです
+style:
+  font: "Noto Sans CJK JP"
+upload:
+  title: セルフテストなんですが… #selftest #shorts
+  description: パイプライン検証用
+  tags: [selftest, shorts]
+  thumbnail_text: TEST
+"""
+
 
 def sh(cmd, **kw):
     r = subprocess.run([str(c) for c in cmd], **kw)
@@ -77,48 +96,68 @@ def sh(cmd, **kw):
     return r
 
 
+def probe(path: Path) -> dict:
+    r = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries",
+         "format=duration:stream=width,height,codec_type", "-of", "json", str(path)],
+        capture_output=True, text=True)
+    return json.loads(r.stdout)
+
+
+def make_case(name: str, clip_yaml: str) -> Path:
+    clip = ROOT / "clips" / name
+    if clip.exists():
+        shutil.rmtree(clip)
+    clip.mkdir(parents=True)
+    (clip / "clip.yaml").write_text(clip_yaml, encoding="utf-8")
+    shutil.copy(ROOT / "clips" / "001_vrchat_real" / "translation.yaml",
+                clip / "translation.yaml")
+    (clip / "source.en.vtt").write_text(VTT, encoding="utf-8")
+    sh(["ffmpeg", "-y", "-loglevel", "error",
+        "-f", "lavfi", "-i", "testsrc2=size=1920x1080:rate=30:duration=28",
+        "-f", "lavfi", "-i", "sine=frequency=440:duration=28",
+        "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac",
+        str(clip / "cut.mp4")])
+    sh([sys.executable, str(ROOT / "tools" / "make_clip.py"), name.split("_")[0],
+        "--skip-fetch"])
+    return clip
+
+
 def main():
     for tool in ("ffmpeg", "ffprobe"):
         if shutil.which(tool) is None:
             sys.exit(f"[selftest NG] {tool} がありません")
 
-    if CLIP.exists():
-        shutil.rmtree(CLIP)
-    CLIP.mkdir(parents=True)
-    (CLIP / "clip.yaml").write_text(CLIP_YAML, encoding="utf-8")
-    shutil.copy(ROOT / "clips" / "001_vrchat_real" / "translation.yaml",
-                CLIP / "translation.yaml")
-    (CLIP / "source.en.vtt").write_text(VTT, encoding="utf-8")
-
-    # 28秒の合成映像(window 10〜38秒ぶんの想定)
-    sh(["ffmpeg", "-y", "-loglevel", "error",
-        "-f", "lavfi", "-i", "testsrc2=size=1920x1080:rate=30:duration=28",
-        "-f", "lavfi", "-i", "sine=frequency=440:duration=28",
-        "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac",
-        str(CLIP / "cut.mp4")])
-
-    sh([sys.executable, str(ROOT / "tools" / "make_clip.py"), "900", "--skip-fetch"])
-
-    # 検証
-    ass = (CLIP / "subs.ass").read_text(encoding="utf-8")
+    # --- 横型 ---
+    clip = make_case("900_selftest", CLIP_YAML_WIDE)
+    ass = (clip / "subs.ass").read_text(encoding="utf-8")
     jp = [l for l in ass.splitlines() if l.startswith("Dialogue:") and ",JP_" in l]
     en = [l for l in ass.splitlines() if l.startswith("Dialogue:") and ",EN_orig," in l]
     assert len(jp) == 6, f"JP字幕が6行のはず: {len(jp)}"
     assert len(en) == 6, f"EN字幕が6行のはず: {len(en)}"
     assert "本物になりたいの" in ass, "日本語テキストが.assに無い"
-
-    out = CLIP / "out" / "900_selftest.mp4"
-    assert out.exists(), "完成mp4が無い"
-    probe = subprocess.run(
-        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-         "-of", "json", str(out)],
-        capture_output=True, text=True)
-    dur = float(json.loads(probe.stdout)["format"]["duration"])
+    out = clip / "out" / "900_selftest.mp4"
+    meta = probe(out)
+    dur = float(meta["format"]["duration"])
     assert 26 <= dur <= 30, f"出力動画の長さが異常: {dur}"
-    assert (CLIP / "out" / "upload.md").exists(), "upload.mdが無い"
-    assert (CLIP / "transcript.txt").exists(), "transcript.txtが無い"
+    v = [s for s in meta["streams"] if s.get("codec_type") == "video"][0]
+    assert (v["width"], v["height"]) == (1920, 1080), "横型の解像度が異常"
+    assert (clip / "out" / "upload.md").exists()
+    assert (clip / "transcript.txt").exists()
+    print(f"[selftest OK] 横型: {out} ({dur:.1f}s)")
 
-    print(f"[selftest OK] 出力: {out} ({dur:.1f}s)")
+    # --- 縦型Shorts ---
+    clip = make_case("901_selftest_shorts", CLIP_YAML_SHORTS)
+    ass = (clip / "subs.ass").read_text(encoding="utf-8")
+    assert "PlayResX: 1080" in ass, "縦型のPlayResになっていない"
+    assert ",HOOK," in ass and "上部テロップ" in ass, "フックテロップが.assに無い"
+    out = clip / "out" / "901_selftest_shorts.mp4"
+    meta = probe(out)
+    v = [s for s in meta["streams"] if s.get("codec_type") == "video"][0]
+    assert (v["width"], v["height"]) == (1080, 1920), f"縦型の解像度が異常: {v['width']}x{v['height']}"
+    audio = [s for s in meta["streams"] if s.get("codec_type") == "audio"]
+    assert audio, "縦型出力に音声が無い"
+    print(f"[selftest OK] 縦型: {out}")
 
 
 if __name__ == "__main__":
