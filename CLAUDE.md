@@ -30,6 +30,7 @@
 - `configs/layer_mapping.yaml`: See-through V3実タグ体系に較正済み（ソース調査で検証）
 - `configs/aituberkit.env.example`: AITuberKit用env（変数名は本家.env.exampleに対し検証済み）
 - `tests/run_selftest.py`: 正規化のラウンドトリップ検証。**Pythonコード変更時は必ず実行**
+- `kirinuki/`: 海外Vtuber翻訳切り抜き制作キット(実験1号=Neuro-sama)。`tools/make_clip.py` がパイプライン本体、`tests/run_selftest.py` で通し検証。詳細は `kirinuki/README.md`
 
 ## 重要な技術的前提（再調査不要）
 
