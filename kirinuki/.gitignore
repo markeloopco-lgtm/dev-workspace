@@ -1,0 +1,8 @@
+# ダウンロード素材と生成物はコミットしない
+clips/*/source.*
+clips/*/source*.vtt
+clips/*/cut.*
+clips/*/out/
+clips/*/subs.ass
+tests/work/
+clips/900_selftest/

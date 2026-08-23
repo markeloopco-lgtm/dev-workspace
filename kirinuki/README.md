@@ -1,0 +1,76 @@
+# kirinuki: 海外Vtuber翻訳切り抜き 制作キット
+
+海外Vtuberの配信を日本語字幕付き切り抜きにする半自動パイプライン。
+実験チャンネル1号は **Neuro-sama / Evil Neuro**(AI VTuber、開発者: Vedal)。
+
+## なぜNeuro-samaから始めるか
+
+- [公式サイトのクリップ方針](https://vedal.ai/advice/)で **YouTubeへのクリップ投稿が明文で許可**されている(実験3候補の中で唯一)
+- 2026年に Twitchサブスク世界3位・ハイプトレイン世界記録と勢いが最強クラス
+- 日本語切り抜きは既に競合が多いため、**「双子(Neuro & Evil)×Vedalの家族劇場」路線+2026年の最新バズ**で差別化する
+- ⚠️ **収益化はまだONにしない**。クリップ許可は明文だが収益化の明文規定が無いため、
+  [公式Discord](https://discord.gg/neurosama) で翻訳切り抜き+収益化の可否を確認してから(下記TODO)
+
+## セットアップ(配信PC / Windows PowerShell)
+
+```powershell
+winget install Gyan.FFmpeg          # ffmpeg
+pip install yt-dlp pyyaml           # ダウンローダとYAML読み込み
+```
+
+フォントは `Noto Sans CJK JP` 推奨(無ければ各 `clip.yaml` の `style.font` を `Yu Gothic UI` に変更)。
+
+## 使い方(1本 = 1コマンド)
+
+```powershell
+cd <このリポジトリ>\kirinuki
+.\tools\make_clip.ps1 001
+```
+
+やってくれること:
+
+1. 元動画の**チャンネル名を検証**(公式以外なら停止)し、英語の自動字幕(VTT)を取得
+2. `translation.yaml` の英語アンカーを字幕から探して、日本語字幕にタイミングを自動付与
+3. 切り抜き区間だけ動画をダウンロード(全編は落とさない)
+4. ffmpegで字幕焼き込み → `clips/<名前>/out/` に **完成mp4** と **投稿用メタ(upload.md)** を出力
+5. 区間の書き起こし `transcript.txt` も毎回出力(訳漏れチェック用)
+
+### 翻訳の往復フロー(重要)
+
+翻訳の下書きは報道で確認できたセリフ分のみ入っている。**初回実行後に必ず**:
+
+1. `clips/<名前>/transcript.txt` を開く
+2. 中身をClaudeに貼り付けて「この書き起こしから translation.yaml を完成させて」と依頼
+3. もう一度 `.\tools\make_clip.ps1 <番号> -SkipFetch` → 完成版が出る
+
+クリップ003(Evil回)はアンカー未設定なので、最初から この往復が前提(初回は書き起こしだけ出て止まる)。
+
+## 3本の企画
+
+| # | フォルダ | ジャンル | 内容 |
+|---|---|---|---|
+| 001 | `001_vrchat_real` | 感動系 | VRChatで初めて身体を得たAIが「私、本物になれる?」と創造主に尋ねる回 |
+| 002 | `002_hypetrain_lv126` | お祭り系 | Twitchハイプトレイン世界記録Lv126達成の瞬間とAIの名言 |
+| 003 | `003_evil_vrchat` | コメディ系 | Evil Neuro & Vedal のVRChat回(書き起こし往復で制作) |
+
+ジャンルを3方向に散らしてあるので、再生数で「日本の視聴者に刺さる路線」をA/Bテストする。
+
+## 公開時のルール(必ず守る)
+
+- 説明欄の冒頭に**元動画URLとタイトル**(upload.mdに自動で入る)
+- 元配信のアーカイブ公開前に投稿しない/メン限・有料コンテンツは扱わない
+- 収益化はDiscordでの許諾確認が取れるまでOFF
+
+## TODO(実験チャンネル2・3号)
+
+- [ ] [Neuro-sama公式Discord](https://discord.gg/neurosama)で「日本語翻訳切り抜き+収益化」の可否を確認し、返答をスクショ保存
+- [ ] Ironmouse: 2026年6月に本人がクリップ方針を配信で説明済み。DiscordかモデレーターにJP翻訳切り抜きの可否を確認 → OKなら2号機
+- [ ] Dokibird / Mint Fantome: 公式のファンコンテンツ規約が見つからないため、本人Discordで確認 → OKなら3号機
+
+## チャンネル名の候補(1号機)
+
+- ヴェダル家の食卓【Neuro-sama日本語翻訳】
+- ネウロ姉妹にっき【日本語切り抜き】
+- AI姉妹とかめ【Neuro & Evil翻訳】
+
+(「双子+創造主の家族もの」という編成方針がチャンネル名から伝わるものを推奨)
