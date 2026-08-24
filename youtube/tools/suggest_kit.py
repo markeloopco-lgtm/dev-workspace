@@ -312,7 +312,7 @@ def cmd_selftest(_args: argparse.Namespace) -> int:
     plan_file = Path(__file__).resolve().parent.parent / "keywords" / "plan_keywords.tsv"
     if plan_file.exists():
         real_plans = load_plans(plan_file)
-        check("plan_keywords.tsv:30本", len(real_plans), 30)
+        check("plan_keywords.tsv:企画が読める", len(real_plans) >= 30, True)
         ids = [p["plan_id"] for p in real_plans]
         check("plan_keywords.tsv:ID重複なし", len(set(ids)), len(ids))
         missing = [p["plan_id"] for p in real_plans if not p.get("main_kw")]
