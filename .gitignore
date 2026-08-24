@@ -6,3 +6,8 @@ output/*
 !input/.gitkeep
 !output/.gitkeep
 *.psd
+video_input/*
+video_out/*
+!video_input/.gitkeep
+!video_out/.gitkeep
+*.mp4

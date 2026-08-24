@@ -7,6 +7,7 @@
 
 - 日本語話者。非エンジニア寄り。**1ステップずつ、確認を取りながら**進めること
 - 配信PC: Windows / RTX 3050 Laptop (VRAM 4GB) / PowerShell
+- 動画編集機: MacBook (Apple Silicon M5 / メモリ16GB) / zsh
 - **完全無料方針**（有料サービスの提案は明示的に求められた時のみ）
 - Claude Pro/Maxサブスクリプション利用（API課金なし）
 
@@ -25,10 +26,14 @@
 ## リポジトリ構成
 
 - `docs/01〜05`: 工程順のドキュメント（発注仕様→See-through→Cubism→AITuber運用→ローカル移行）
+- `docs/06`: AI動画生成パイプライン（Live2Dとは別系統。クラウド無料GPU × Mac仕上げ）
 - `scripts/normalize_psd.py`: PSDレイヤー正規化（inspect / normalize）。GPU不要
 - `scripts/batch_decompose.py`: 一括処理（`--normalize-only` はローカルで使う）
 - `configs/layer_mapping.yaml`: See-through V3実タグ体系に較正済み（ソース調査で検証）
 - `configs/aituberkit.env.example`: AITuberKit用env（変数名は本家.env.exampleに対し検証済み）
+- `scripts/setup_mac_video.sh`: MacBook側の動画環境構築（Homebrew/ffmpeg/venv/フォルダ）
+- `scripts/finish_reel.py`: 生成クリップを縦型9:16の投稿用に仕上げる。GPU不要・実機検証済み
+- `notebooks/video_gen_free_gpu.ipynb`: Kaggle無料GPUでのAI動画生成。**実行未検証**
 - `tests/run_selftest.py`: 正規化のラウンドトリップ検証。**Pythonコード変更時は必ず実行**
 
 ## 重要な技術的前提（再調査不要）
@@ -38,6 +43,16 @@
 - AITuberKitランタイムはCubism 3/4系。**Cubism 5新機能は使わない**でリグを作る
 - pytoshop書き出しPSDはunicode名に終端NULが付く既知問題 → normalize_psd.pyが除去済み
 - ライセンス: AITuberKit非商用無料・**Live2D機能は現在商用不可**／SBV2はAGPL／声モデルはクレジット表記（docs/04の表参照）
+
+### AI動画パイプライン側（docs/06）
+
+- **Macローカルでの動画生成は非現実的**。M1 Max 64GBでもWan 2.2で2秒に82分、
+  MetalがFloat8_e4m3fn未実装でFP8が動かない、Draw Thingsも動画は24GB以上推奨。
+  → 生成はクラウド無料GPU、Macは仕上げ専任
+- **Kaggle無料GPUのT4はTuring世代でbf16もFP8も非対応**。ネット上の作例はbf16前提が多く
+  そのままでは落ちる → ノートブックはfp16へ自動フォールバック
+- Wan 2.2はVAEデコード時のOOM報告あり（diffusers #12097）→ `enable_tiling()` で回避
+- 解像度とフレーム数に刻みがある: Wanは16の倍数・4n+1、LTXは32の倍数・8n+1
 
 ## 作業方針
 
