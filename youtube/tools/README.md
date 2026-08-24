@@ -8,43 +8,59 @@ YouTubeとGoogleの**サジェスト（検索候補）**を自動で集めて、
 
 ---
 
-## いちばん簡単な使い方（まどかさん向け）
+## 🍎 Mac での使い方（いちばん簡単）
 
-**やることは1つだけです。PowerShellでコマンドを1回打ちます。**
+**やることは、ファイルを1回ダブルクリックするだけです。**
 
-1. PowerShellを開く（スタートメニューで「PowerShell」と検索）
-2. このフォルダに移動する
+### 手順
 
-   ```powershell
-   cd （このtoolsフォルダのパス）
+1. **`run_mac.command` をダブルクリック**
+
+2. 「開発元を検証できないため開けません」と出たら
+   → ファイルを**右クリック →「開く」**→ 出てきた確認で「開く」
+   （1回目だけです。2回目からは普通にダブルクリックで開けます）
+
+3. ターミナルが開いて、こう聞かれます
+
+   ```
+   1) お試し   … 1〜2分。ちゃんと動くかの確認用
+   2) 本番     … 15〜25分。企画に使う本番データを取ります
    ```
 
-3. まず軽く試す（1〜2分で終わります）
+   **最初は `1` を入れてEnter。** 動くのを確認してから、もう一度ダブルクリックして `2`。
 
-   ```powershell
-   .\Get-Suggest.ps1 -Shallow
-   ```
+4. 終わるとFinderが開いて、2つのファイルができています
 
-   > ⚠️ 「このシステムではスクリプトの実行が無効になっている」と出たら、
-   > 一度だけ次を実行してください（このPowerShellの窓の中だけ有効になります）
-   > ```powershell
-   > Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
-   > ```
+   - `youtube/keywords/suggest.csv` … 集めたサジェスト
+   - `youtube/keywords/report.md` … 企画30本との突き合わせレポート
 
-4. うまくいったら本番。深掘りして取ります（**15〜25分**かかります）
+5. **この2つをClaudeに渡してください。** タイトル30本を実データで書き直します。
 
-   ```powershell
-   .\Get-Suggest.ps1
-   ```
+### 「python3 が見つかりません」と出たら
 
-5. `youtube/keywords/suggest.csv` ができます。**このファイルを私に渡してください。**
-   30本のタイトルを実データに合わせて書き直します。
+ターミナルで一度だけ次を実行してください（無料・5〜10分）。
+
+```bash
+xcode-select --install
+```
+
+インストールが終わったら、`run_mac.command` をもう一度ダブルクリックします。
+
+### ダブルクリックが効かないとき
+
+ターミナルを開いて、以下を実行しても同じことができます。
+
+```bash
+cd （このtoolsフォルダをターミナルにドラッグ＆ドロップ）
+chmod +x run_mac.command
+./run_mac.command
+```
 
 ---
 
 ## 何をしているのか
 
-「看護師 辞めたい」だけでなく、
+「看護師 辞めたい」で聞くだけでなく、
 「看護師 辞めたい **あ**」「看護師 辞めたい **い**」…と**後ろに1文字ずつ足して**
 検索候補を聞きに行きます。これで1つのキーワードから数十語の実需要が取れます。
 
@@ -53,21 +69,7 @@ YouTubeとGoogleの**サジェスト（検索候補）**を自動で集めて、
 
 ---
 
-## 分析まで自分でやる場合（Pythonが必要）
-
-```powershell
-# 収集
-python suggest_kit.py fetch --seeds seeds.txt --out ..\keywords\suggest.csv
-
-# 企画30本と突き合わせてレポート生成
-python suggest_kit.py match --suggest ..\keywords\suggest.csv `
-    --plans ..\keywords\plan_keywords.tsv --out ..\keywords\report.md
-
-# 動作確認（ネット接続不要）
-python suggest_kit.py selftest
-```
-
-### 出てくるレポートの読み方
+## レポートの読み方
 
 `../keywords/report.md` に3つの表が出ます。
 
@@ -83,13 +85,36 @@ python suggest_kit.py selftest
 
 ---
 
+## コマンドで細かく操作する場合
+
+```bash
+# 収集
+python3 suggest_kit.py fetch --seeds seeds.txt --out ../keywords/suggest.csv
+
+# ゆっくり取る（失敗が多いとき）
+python3 suggest_kit.py fetch --seeds seeds.txt --out ../keywords/suggest.csv --delay 1.0
+
+# Google検索のサジェストも一緒に取る
+python3 suggest_kit.py fetch --seeds seeds.txt --out ../keywords/suggest.csv --web
+
+# 企画30本と突き合わせ
+python3 suggest_kit.py match --suggest ../keywords/suggest.csv \
+    --plans ../keywords/plan_keywords.tsv --out ../keywords/report.md
+
+# 動作確認（ネット接続不要）
+python3 suggest_kit.py selftest
+```
+
+---
+
 ## ファイル構成
 
 | ファイル | 中身 |
 |---|---|
-| `Get-Suggest.ps1` | PowerShell版の収集スクリプト（Python不要） |
-| `suggest_kit.py` | Python版。収集＋企画との突き合わせ＋セルフテスト |
+| `run_mac.command` | **Mac用**。ダブルクリックで収集からレポートまで一気に実行 |
+| `suggest_kit.py` | 本体。収集＋企画との突き合わせ＋セルフテスト |
 | `seeds.txt` | シードキーワード一覧。編集可 |
+| `Get-Suggest.ps1` | Windows（PowerShell）用。配信PCで動かす場合のみ使用 |
 | `../keywords/plan_keywords.tsv` | 企画30本のKW定義。企画を足したらここに1行追加 |
 | `../keywords/suggest.csv` | 収集結果（実行後にできます） |
 | `../keywords/report.md` | 突き合わせレポート（実行後にできます） |
@@ -101,15 +126,15 @@ python suggest_kit.py selftest
 | 症状 | 原因と対処 |
 |---|---|
 | 1語も取れない | 職場や病院のネットワークは制限が強いことがあります。**自宅のWi-Fiかスマホのテザリング**で試してください |
-| 途中から失敗が増える | 短時間に叩きすぎです。`-Delay 1.0` を付けて間隔を空けてください |
-| 文字化けする | `Get-Suggest.ps1` はUTF-8で書き出します。ExcelではなくGoogleスプレッドシートで開くと確実です |
-| スクリプトが実行できない | 上記の `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` を実行 |
+| 途中から失敗が増える | 短時間に叩きすぎです。`--delay 1.0` を付けて間隔を空けてください |
+| `python3` がない | `xcode-select --install` を実行 |
+| 「開発元を検証できない」 | ファイルを右クリック →「開く」 |
+| CSVが文字化けする | UTF-8で書き出しています。ExcelではなくGoogleスプレッドシートか「数値」で開いてください |
 
 ---
 
 ## 手作業でやる場合（ツールなし）
 
-スマホのYouTubeアプリの検索窓に「**看護師 **」とスペースまで入れると、
-候補が出ます。これがサジェストです。
-「フリーランス看護師 」「ママナース 」でも同じことをして、
+スマホのYouTubeアプリの検索窓に「**看護師 **」とスペースまで入れると、候補が出ます。
+これがサジェストです。「フリーランス看護師 」「ママナース 」でも同じことをして、
 出てきた語をメモしてください。数は少ないですが、確実です。

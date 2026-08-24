@@ -88,22 +88,25 @@ YouTubeのアルゴリズムは、タイトル・概要欄・タグ・字幕と�
 **この企画表のキーワードは「推定」です。実データで裏を取ってください。**
 そのためのツールを `youtube/tools/` に用意しました。詳細は `youtube/tools/README.md`。
 
-### 手順（PowerShellで1コマンド）
+### 手順（Mac：ダブルクリック1回）
 
-```powershell
-cd （youtube\tools のパス）
-.\Get-Suggest.ps1 -Shallow     # まず1〜2分で試す
-.\Get-Suggest.ps1              # 本番。15〜25分
-```
+`youtube/tools/run_mac.command` をダブルクリックして、聞かれたら
+`1`（お試し・1〜2分）→ うまくいったら `2`（本番・15〜25分）を選ぶだけです。
 
-`youtube/keywords/suggest.csv` ができます。**これを渡してもらえれば、
-30本のタイトルを実際に検索されている言い回しに書き直します。**
+収集からレポート生成まで自動で走り、2つのファイルができます。
 
-自分で分析まで回す場合（Python必要）:
+- `youtube/keywords/suggest.csv` … 集めたサジェスト
+- `youtube/keywords/report.md` … 企画30本との突き合わせレポート
 
-```powershell
-python suggest_kit.py match --suggest ..\keywords\suggest.csv `
-    --plans ..\keywords\plan_keywords.tsv --out ..\keywords\report.md
+**この2つを渡してもらえれば、30本のタイトルを
+実際に検索されている言い回しに書き直します。**
+
+コマンドで回す場合:
+
+```bash
+python3 suggest_kit.py fetch --seeds seeds.txt --out ../keywords/suggest.csv
+python3 suggest_kit.py match --suggest ../keywords/suggest.csv \
+    --plans ../keywords/plan_keywords.tsv --out ../keywords/report.md
 ```
 
 レポートには3つの表が出ます。
