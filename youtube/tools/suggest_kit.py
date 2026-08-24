@@ -217,7 +217,7 @@ def build_report(plans: list[dict[str, str]], suggestions: list[dict[str, str]])
     lines.append("|---|---|---|")
 
     uncovered = [(t, w) for t, w in weight.most_common() if t not in matched_texts]
-    for i, (text, score) in enumerate(uncovered[:50], start=1):
+    for i, (text, score) in enumerate(uncovered[:60], start=1):
         lines.append(f"| {i} | {text} | {score} |")
     if not uncovered:
         lines.append("| - | （すべてカバー済み） | - |")
@@ -232,6 +232,26 @@ def build_report(plans: list[dict[str, str]], suggestions: list[dict[str, str]])
         lines.append(f"| {i} | {text} | {score} | {mark} |")
 
     lines.append("")
+    lines.append("## 4. シード別 サジェスト TOP12")
+    lines.append("")
+    lines.append("どのテーマにどれだけ需要が集まっているかが見えます。")
+    lines.append("`—` は企画でカバーできていない語です。")
+    lines.append("")
+
+    by_seed: dict[str, set[str]] = {}
+    for row in suggestions:
+        by_seed.setdefault(row.get("seed", ""), set()).add(row["suggestion"])
+
+    for seed in sorted(by_seed, key=lambda s: -sum(weight[t] for t in by_seed[s])):
+        items = sorted(by_seed[seed], key=lambda t: -weight[t])[:12]
+        total = sum(weight[t] for t in by_seed[seed])
+        lines.append(f"### {seed}（{len(by_seed[seed])}語 / 合計スコア {total}）")
+        lines.append("")
+        for text in items:
+            mark = "○" if text in matched_texts else "—"
+            lines.append(f"- {mark} {text}（{weight[text]}）")
+        lines.append("")
+
     return "\n".join(lines)
 
 
