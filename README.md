@@ -26,6 +26,17 @@ AITuberKitで自動運用配信               ← docs/04
                           配信するチャンネルの開設      ← docs/06 (並行して進められる)
 ```
 
+ショート動画だけ作るなら、Cubism以降は不要:
+
+```
+一枚絵 → See-throughで分解 → 立ち絵PNG
+                                │
+                    台本 + Style-Bert-VITS2のWAV
+                                │
+                                ▼
+                  scripts/make_short.py → 縦型MP4   ← docs/07 (GPU不要)
+```
+
 ## セットアップ
 
 ```bash
@@ -64,14 +75,17 @@ export SEE_THROUGH_DIR=/path/to/see-through
 | `docs/04_aituber_runtime.md` | AITuber運用構成 (AITuberKit + Gemini + SBV2 + OBS) |
 | `docs/05_local_claude_code.md` | ローカルPCへの移行手順 (Claude Codeで続きを進める) |
 | `docs/06_channel_launch.md` | YouTubeチャンネル開設・初配信までの手順とチェックリスト |
+| `docs/07_shorts_pipeline.md` | ショート動画の量産手順（配信を使わないルート） |
 | `CLAUDE.md` | ローカルClaude Code用の引き継ぎ書 (現状・残タスク・技術前提) |
 | `scripts/normalize_psd.py` | PSDレイヤー正規化 (inspect / normalize / PNG書き出し) |
 | `scripts/batch_decompose.py` | 分解→正規化の一括ドライバ |
+| `scripts/make_short.py` | 台本YAML+音声WAV → 縦型MP4 (字幕焼き込み・口パク自動生成) |
 | `scripts/setup_aituber.sh` | AITuberKit導入・モデル組み込みヘルパー |
 | `configs/layer_mapping.yaml` | レイヤー名マッピング定義 (育てる設定ファイル) |
 | `configs/aituberkit.env.example` | AITuberKit環境変数テンプレ (本構成向け・検証済み) |
 | `notebooks/see_through_free_gpu.ipynb` | See-throughをKaggle/Colab無料GPU枠で回すノートブック |
 | `tests/run_selftest.py` | ラウンドトリップ検証 (GPU不要) |
+| `tests/test_make_short.py` | ショート書き出しのエンドツーエンド検証 (GPU不要) |
 
 ## 実装メモ
 

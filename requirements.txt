@@ -4,3 +4,6 @@ pytoshop>=1.2
 numpy
 Pillow
 PyYAML
+
+# ショート動画書き出し用 (docs/07)。ffmpeg本体を同梱するので別途インストール不要
+imageio-ffmpeg

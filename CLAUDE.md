@@ -21,6 +21,8 @@
 - [ ] Cubism Editor PROトライアルで1体目のマスターリグ作成（GUI作業。docs/03のチェックリストに沿ってユーザーを誘導）
 - [ ] Gemini APIキー・YouTube Data API v3キーの取得誘導 → .env設定
 - [ ] OBS設定（クロマキー）→ テスト配信
+- [ ] ショート1本目を通しで作る（docs/07。立ち絵PNG＋SBV2のWAVがあれば配信システム抜きで完結。
+      **ユーザーの現在の関心はショート量産**。参考チャンネルは未確認）
 - [ ] チャンネル企画を固める（docs/06 Step 0の表を埋める。キャラ設定＝AITuberKitの
       システムプロンプトなので、ここが決まらないと配信内容が決まらない）
 - [ ] YouTubeチャンネル開設＋ライブ配信の有効化（docs/06。**有効化に最大24時間**
@@ -29,11 +31,14 @@
 ## リポジトリ構成
 
 - `docs/01〜06`: 工程順のドキュメント（発注仕様→See-through→Cubism→AITuber運用→ローカル移行→チャンネル開設）
+- `docs/07_shorts_pipeline.md`: ショート量産ルート（配信とは独立。立ち絵PNG+WAVだけで完結）
 - `scripts/normalize_psd.py`: PSDレイヤー正規化（inspect / normalize）。GPU不要
 - `scripts/batch_decompose.py`: 一括処理（`--normalize-only` はローカルで使う）
+- `scripts/make_short.py`: 台本YAML+WAV → 縦型MP4。ffmpeg必要・GPU不要。**変更時は `tests/test_make_short.py` を必ず実行**
 - `configs/layer_mapping.yaml`: See-through V3実タグ体系に較正済み（ソース調査で検証）
 - `configs/aituberkit.env.example`: AITuberKit用env（変数名は本家.env.exampleに対し検証済み）
 - `tests/run_selftest.py`: 正規化のラウンドトリップ検証。**Pythonコード変更時は必ず実行**
+- `tests/test_make_short.py`: ショート書き出しの実書き出し検証（ffmpegが要る）
 
 ## 重要な技術的前提（再調査不要）
 
