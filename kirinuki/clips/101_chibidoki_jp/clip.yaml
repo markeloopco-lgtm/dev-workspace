@@ -1,0 +1,38 @@
+# クリップ101: チビドキ実験1本目(2号機。本人許可取得済み: 2026-08-27ユーザー確認、スクショ保存のこと)
+# ネタ: 日本語ネタ×絶叫 = docs/chibidoki_format.md の勝ちパターンど真ん中。
+# 素材はShortsなので動画全体を使う(window: start 0 + end自動補完)。
+# 初回実行でテロップのみのプレビューmp4とtranscript.txtが出る → 書き起こしを
+# Claudeに貼り付けて translation.yaml を完成 → 再実行で完成版。
+id: "101"
+genre: 日本語ネタ(Shorts)
+format: shorts
+
+source:
+  url: https://www.youtube.com/shorts/eWvdBKE-omQ
+  expected_channel: chibidoki   # 本人ch/公式クリップch(Chibidoki Clips)のどちらでも通る
+  note: >
+    「Chibi SCREAMS P%NIS in Japanese...」。チャンネル検証で止まった場合は
+    公式クリップch https://www.youtube.com/channel/UCn1BJ0lOmNnAcQMnwWwiMtQ か
+    本人ch https://www.youtube.com/@chibidoki の同シーン動画に差し替える。
+
+window:
+  start: 0     # Shorts素材は全体を使う。endは動画の長さから自動補完
+  end: null
+  lead: 0
+  tail: 0
+
+hook: 日本語を覚えたてのチビドキ
+
+style:
+  font: "Noto Sans CJK JP"
+
+upload:
+  # チビドキ式: プレフィックスなしのフック一文+ハッシュタグ
+  title: 覚えたての日本語を絶叫しちゃうチビドキ… #chibidoki #チビドキ #vtuber切り抜き #shorts
+  description: |
+    「Funniest VTuber」2年連続受賞のチビドキ、日本語にも(変な方向で)積極的です。
+    ご本人の許可をいただいて投稿しています / Posted with permission.
+
+    #chibidoki #チビドキ #vtuber切り抜き #日本語翻訳 #shorts
+  tags: [chibidoki, チビドキ, Vtuber切り抜き, 日本語, shorts]
+  thumbnail_text: その日本語はダメ!

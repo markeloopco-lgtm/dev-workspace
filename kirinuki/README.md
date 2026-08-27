@@ -53,6 +53,7 @@ cd <このリポジトリ>\kirinuki
 | 002 | `002_hypetrain_lv126` | 横 | お祭り系 | Twitchハイプトレイン世界記録Lv126達成の瞬間とAIの名言 |
 | 003 | `003_evil_vrchat` | 横 | コメディ系 | Evil Neuro & Vedal のVRChat回(書き起こし往復で制作) |
 | 004 | `004_jp_shorts` | **縦Shorts** | 日本語ネタ | 日本語を話すネウロ様(チビドキ式構成の1本目) |
+| 101 | `101_chibidoki_jp` | **縦Shorts** | 日本語ネタ | 【2号機: チビドキ】覚えたての日本語を絶叫する回(本人許可済み) |
 
 ジャンルを散らしてあるので、再生数で「日本の視聴者に刺さる路線」をA/Bテストする。
 
@@ -77,7 +78,7 @@ cd <このリポジトリ>\kirinuki
 - [ ] [Neuro-sama公式Discord](https://discord.gg/neurosama)で「日本語翻訳切り抜き+収益化」の可否を確認し、返答をスクショ保存
 - [ ] Ironmouse: 2026年6月に本人がクリップ方針を配信で説明済み。DiscordかモデレーターにJP翻訳切り抜きの可否を確認 → OKなら2号機
 - [ ] Dokibird / Mint Fantome: 公式のファンコンテンツ規約が見つからないため、本人Discordで確認 → OKなら3号機
-- [ ] Chibidoki: 所属のMythic Talentに公開切り抜き規約なし(2026-08時点)。本人Discordで確認が取れれば2号機候補(詳細: `docs/chibidoki_format.md`)
+- [x] Chibidoki: **本人許可取得済み(2026-08-27 ユーザー確認)** → 2号機として実験開始(`clips/101_chibidoki_jp`)。許可の返答は必ずスクショ保存しておくこと
 
 ## チャンネル名の候補(1号機)
 

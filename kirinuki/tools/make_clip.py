@@ -172,20 +172,21 @@ def stage_fetch_subs(clip_dir: Path, cfg: dict):
     require_tool("yt-dlp")
     probe = run(
         ["yt-dlp", "--skip-download", "--no-warnings",
-         "--print", "uploader", "--print", "title", url],
+         "--print", "uploader", "--print", "title", "--print", "duration", url],
         capture_output=True, text=True,
     )
     if probe.returncode != 0:
         die(f"動画情報の取得に失敗:\n{probe.stderr.strip()[-500:]}")
-    uploader, title = (probe.stdout.strip().splitlines() + ["", ""])[:2]
-    info(f"チャンネル: {uploader} / タイトル: {title}")
+    uploader, title, duration = (probe.stdout.strip().splitlines() + ["", "", ""])[:3]
+    info(f"チャンネル: {uploader} / タイトル: {title} / 長さ: {duration}s")
     expected = cfg["source"].get("expected_channel")
     if expected and expected.lower() not in uploader.lower():
         die(
             f"アップロード元 '{uploader}' が期待値 '{expected}' と一致しません。"
             " 公式ソースか確認してから clip.yaml の expected_channel を更新してください。"
         )
-    (clip_dir / "source_title.txt").write_text(f"{title}\n{uploader}\n", encoding="utf-8")
+    (clip_dir / "source_title.txt").write_text(
+        f"{title}\n{uploader}\n{duration}\n", encoding="utf-8")
 
     if not list(clip_dir.glob("source*.vtt")):
         r = run(
@@ -208,6 +209,20 @@ def stage_match(clip_dir: Path, cfg: dict, trans: dict):
     win = cfg.get("window") or {}
     w_start, w_end = parse_ts(win.get("start")), parse_ts(win.get("end"))
     lead, tail = float(win.get("lead", 4)), float(win.get("tail", 4))
+
+    # 素材全体をクリップにする場合(Shorts素材など): start指定+endなしなら
+    # 動画の長さ(fetch時に保存)→無ければ字幕の最終時刻で補完する
+    if w_start is not None and w_end is None:
+        meta = clip_dir / "source_title.txt"
+        lines = meta.read_text(encoding="utf-8").splitlines() if meta.exists() else []
+        if len(lines) >= 3 and lines[2].strip():
+            try:
+                w_end = float(lines[2].strip())
+            except ValueError:
+                pass
+        if w_end is None:
+            w_end = cues[-1][1] + tail
+        info(f"クリップ終端を補完: {fmt_ts(w_end)}")
 
     matched, idx = [], 0
     for u in units:
@@ -242,6 +257,10 @@ def stage_match(clip_dir: Path, cfg: dict, trans: dict):
     info(f"書き起こしを出力: {clip_dir / 'transcript.txt'}")
 
     if not hit:
+        if w_start is not None and w_end is not None:
+            info("翻訳ユニットが未設定/未一致のため、テロップのみのプレビューを生成します。"
+                 "transcript.txt をClaudeに渡して翻訳を完成させてください。")
+            return {"window": (w_start, w_end), "units": []}
         info("一致した翻訳ユニットがありません。transcript.txt をClaudeに渡して翻訳を作成してください。")
         return None
     return {"window": (w_start, w_end), "units": hit}
@@ -262,6 +281,7 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
 Style: JP_neuro,{font},78,&H00C88AFF,&H00FFFFFF,&H00201020,&H80000000,-1,0,0,0,100,100,0,0,1,4,1,2,60,60,70,1
 Style: JP_evil,{font},78,&H005C5CFF,&H00FFFFFF,&H00100C20,&H80000000,-1,0,0,0,100,100,0,0,1,4,1,2,60,60,70,1
 Style: JP_vedal,{font},78,&H007FE07F,&H00FFFFFF,&H00102010,&H80000000,-1,0,0,0,100,100,0,0,1,4,1,2,60,60,70,1
+Style: JP_chibi,{font},78,&H00FF8AD9,&H00FFFFFF,&H00200C18,&H80000000,-1,0,0,0,100,100,0,0,1,4,1,2,60,60,70,1
 Style: JP_other,{font},78,&H00FFFFFF,&H00FFFFFF,&H00151515,&H80000000,-1,0,0,0,100,100,0,0,1,4,1,2,60,60,70,1
 Style: EN_orig,{font},44,&H00C8C8C8,&H00FFFFFF,&H00151515,&H80000000,0,0,0,0,100,100,0,0,1,3,0,2,60,60,190,1
 Style: HOOK,{font},58,&H00FFFFFF,&H00FFFFFF,&H00101010,&H80000000,-1,0,0,0,100,100,0,0,1,5,1,8,60,60,60,1
@@ -283,6 +303,7 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
 Style: JP_neuro,{font},88,&H00C88AFF,&H00FFFFFF,&H00201020,&H80000000,-1,0,0,0,100,100,0,0,1,5,1,2,40,40,560,1
 Style: JP_evil,{font},88,&H005C5CFF,&H00FFFFFF,&H00100C20,&H80000000,-1,0,0,0,100,100,0,0,1,5,1,2,40,40,560,1
 Style: JP_vedal,{font},88,&H007FE07F,&H00FFFFFF,&H00102010,&H80000000,-1,0,0,0,100,100,0,0,1,5,1,2,40,40,560,1
+Style: JP_chibi,{font},88,&H00FF8AD9,&H00FFFFFF,&H00200C18,&H80000000,-1,0,0,0,100,100,0,0,1,5,1,2,40,40,560,1
 Style: JP_other,{font},88,&H00FFFFFF,&H00FFFFFF,&H00151515,&H80000000,-1,0,0,0,100,100,0,0,1,5,1,2,40,40,560,1
 Style: EN_orig,{font},42,&H00C8C8C8,&H00FFFFFF,&H00151515,&H80000000,0,0,0,0,100,100,0,0,1,3,0,2,40,40,470,1
 Style: HOOK,{font},62,&H00FFFFFF,&H00FFFFFF,&H00101010,&H80000000,-1,0,0,0,100,100,0,0,1,5,1,8,50,50,150,1
@@ -347,7 +368,7 @@ def stage_ass(clip_dir: Path, cfg: dict, result: dict) -> Path:
         if e <= s:
             e = s + 1.5
         style = f"JP_{u.get('speaker', 'other')}"
-        if style not in ("JP_neuro", "JP_evil", "JP_vedal"):
+        if style not in ("JP_neuro", "JP_evil", "JP_vedal", "JP_chibi"):
             style = "JP_other"
         jp = wrap_jp(u["jp"], JP_WRAP[fmt if fmt in JP_WRAP else "wide"])
         ev.append(f"Dialogue: 0,{fmt_ass(s)},{fmt_ass(e)},{style},,0,0,0,,{jp}")
