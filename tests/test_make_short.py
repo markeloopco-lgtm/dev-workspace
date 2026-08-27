@@ -93,6 +93,11 @@ def test_wrap() -> None:
     ascii_lines = make_short.wrap_text("abcdefghijklmnopqrstuvwxyz", 40, font, max_px)
     check(all(font.getlength(l) <= max_px for l in ascii_lines), "半角文字でも収まる")
 
+    # 禁則処理: 行頭に句読点が来ない
+    k = make_short.wrap_text("人気声優・〇〇さん(39)、最高すぎると話題に", 13)
+    check(all(not l[0] in "、。" for l in k), "行頭に句読点が来ない(ぶら下げ)")
+    check("".join(k) == "人気声優・〇〇さん(39)、最高すぎると話題に", "禁則処理で文字が欠けない")
+
 
 def test_rate_mismatch(tmp: Path) -> None:
     print("[3] サンプリングレート混在の検出")
@@ -174,6 +179,71 @@ def test_end_to_end(tmp: Path) -> None:
     check(abs(got - expected) < 0.35, f"尺が台詞の合計とほぼ一致 ({got:.2f}s / 期待 {expected:.2f}s)")
 
 
+def test_matome(tmp: Path) -> None:
+    print("[6] まとめ型 (見出し+写真ズーム+反応カード)")
+    proj = tmp / "matome"
+    (proj / "voice").mkdir(parents=True)
+    (proj / "assets").mkdir(parents=True)
+
+    # 写真のダミー(グラデーション)
+    grad = np.linspace(40, 220, 640, dtype=np.uint8)
+    photo = np.stack([np.tile(grad, (480, 1))] * 3, axis=-1)
+    Image.fromarray(photo).save(proj / "assets" / "photo1.png")
+
+    write_tone(proj / "voice" / "001.wav", 0.7)
+
+    script = proj / "script.yaml"
+    script.write_text(
+        f"fps: {FPS}\n"
+        "size: [540, 960]\n"
+        "gap_sec: 0.2\n"
+        "banner:\n  text: 'テスト見出し、話題に'\n"
+        "image:\n  zoom_to: 1.08\n  zoom_step_frames: 3\n"
+        "lines:\n"
+        "  - text: 'ナレーション'\n    audio: voice/001.wav\n"
+        "    image: assets/photo1.png\n"
+        "  - style: comment\n    text: 'これは伝説'\n    duration: 1.0\n"
+        "  - style: comment\n    name: 'なんJ'\n    text: 'すごいわ'\n    duration: 1.0\n",
+        encoding="utf-8",
+    )
+
+    cfg, lines, base_dir = make_short.load_script(script)
+    check(lines[1]["_sec"] == 1.0, "duration行(無音)が読める")
+    check(lines[1]["_rate"] == lines[0]["_rate"], "無音行は音声行とレートが揃う")
+
+    ctxs = make_short.build_contexts(lines, cfg, base_dir)
+    check(ctxs[0]["image"] is not None, "1行目で写真が出る")
+    check(ctxs[2]["image"] == ctxs[0]["image"], "写真は後の行にも残る(スライド式)")
+    check(len(ctxs[1]["comments"]) == 1 and len(ctxs[2]["comments"]) == 2,
+          "コメントが積み上がる")
+    check(ctxs[2]["comments"][1]["no"] == 2 and ctxs[2]["comments"][1]["name"] == "なんJ",
+          "コメント番号と名前が正しい")
+
+    out = proj / "out.mp4"
+    rc = make_short.build(SimpleNamespace(script=str(script), output=str(out), probe=False))
+    check(rc == 0 and out.exists() and out.stat().st_size > 0, "まとめ型のMP4が出力された")
+
+    import re
+    log = probe(make_short.find_ffmpeg(), out)["log"]
+    m = re.search(r"Duration: (\d+):(\d+):([\d.]+)", log)
+    got = int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
+    expected = 0.7 + 1.0 + 1.0 + 0.2 * 2
+    check(abs(got - expected) < 0.35, f"尺が想定と一致 ({got:.2f}s / 期待 {expected:.2f}s)")
+
+    # ズームで絵が変わることをレンダラ単体で確認
+    r = make_short.SceneRenderer(cfg, base_dir)
+    f1 = r.render(ctxs[0], False, 1.0)
+    f2 = r.render(ctxs[0], False, 1.08)
+    check(f1.size == (540, 960), "フレームサイズが正しい")
+    check(f1.tobytes() != f2.tobytes(), "ズームで絵が変わる")
+
+    # max_visible を超えたら古いカードから消える
+    cfg2 = make_short.deep_merge(cfg, {"comment": {"max_visible": 1}})
+    ctxs2 = make_short.build_contexts(lines, cfg2, base_dir)
+    check(len(ctxs2[2]["comments"]) == 1 and ctxs2[2]["comments"][0]["no"] == 2,
+          "max_visibleで古いカードが消える")
+
+
 def test_missing_audio(tmp: Path) -> None:
     print("[5] 台本の不備を分かるエラーにする")
     script = tmp / "bad.yaml"
@@ -191,6 +261,13 @@ def test_missing_audio(tmp: Path) -> None:
     except make_short.ScriptError as e:
         check("lines" in str(e), "linesが無い旨のメッセージが出る")
 
+    script.write_text("lines:\n  - text: 'x'\n", encoding="utf-8")
+    try:
+        make_short.load_script(script)
+        check(False, "audioもdurationも無い行はエラーになる")
+    except make_short.ScriptError as e:
+        check("duration" in str(e), "audioかdurationが必要な旨が出る")
+
 
 def main() -> int:
     print("make_short 検証\n")
@@ -200,6 +277,7 @@ def main() -> int:
         test_wrap()
         test_rate_mismatch(tmp)
         test_end_to_end(tmp)
+        test_matome(tmp)
         test_missing_audio(tmp)
     print("\n全項目パス")
     return 0

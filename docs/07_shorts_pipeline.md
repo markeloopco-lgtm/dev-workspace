@@ -125,6 +125,48 @@ python scripts/make_short.py build shorts/001/script.yaml -o shorts/001/out.mp4
 
 ---
 
+## まとめ型（「◯◯さん、〜すぎると話題に」の再現）
+
+参考動画の型を再現するモード。画面構成は上から:
+
+1. **見出しバナー**（スレタイ風の黄色文字。全編出しっぱなし）
+2. **写真**（スローズームで動きがつく。`image:` を指定した行から表示され続け、
+   次に `image:` を指定した行で差し替わる）
+3. **ネットの反応カード**（`style: comment` の行が1枚ずつ積み上がる。
+   `max_visible` を超えると古い順に消える）
+
+```powershell
+python scripts/make_short.py init shorts/002 --style matome
+```
+
+台本の書き方（テンプレに全部入りの例がある）:
+
+```yaml
+banner:
+  text: "◯◯◯◯、最高すぎると話題に"
+
+lines:
+  - text: "先日のイベントでの一幕が話題になっています"   # ナレーション
+    audio: voice/001.wav
+    image: assets/photo1.png
+  - style: comment          # 反応カード。audioで読み上げ、
+    text: "これは伝説"       # durationなら表示だけ(無音)
+    audio: voice/002.wav
+  - style: comment
+    name: "風吹けば名無し"
+    text: "本人が一番楽しそうなの好き"
+    duration: 2.5
+```
+
+- comment行は `audio`（読み上げ）と `duration`（無音で表示だけ）を選べる。
+  全部読み上げると長くなるので、**最初の1〜2枚だけ読んで残りはduration**が定番
+- ズームを切る（`image.zoom_to: 1.0`）と書き出しがかなり速くなる
+- 見出し・字幕とも行頭に句読点が来ない（禁則処理済み）
+
+> **画像について**: assets/ に置く画像は**使用権のあるものだけ**にすること。
+> 実在の人物の写真を転載して公開すると、著作権・肖像権の問題になる
+> （docs/06 Step 6 と本ページ末尾のライセンスの項を参照）。
+
 ## 量産のコツ
 
 ### 台本はGeminiに書かせる

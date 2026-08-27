@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
 """台本YAML + 音声WAV から YouTubeショート用の縦型MP4を書き出す。
 
-Style-Bert-VITS2で作った台詞WAVと立ち絵PNG(口閉じ/口開き)を組み合わせ、
-字幕を焼き込んだ 1080x1920 の動画を作る。GPU不要・ffmpegのみ必要。
+2つのスタイルに対応する:
+- talk   : 立ち絵 + 字幕。キャラが喋る形式 (口パクは音声のRMSから自動生成)
+- matome : 「◯◯さん、〜すぎると話題に」型。見出しバナー + 写真のスローズーム
+           + ネットの反応カードが積み上がっていく形式
 
-口パクは音声のRMS(音の大きさ)から自動生成する。
-同じ絵になるフレームは1枚しか描かないので、長い動画でも描画は速い。
+どちらも同じ台本形式で、lines の style で行ごとに切り替わる。
+GPU不要・ffmpegのみ必要。同じ絵になるフレームは1枚しか描かない。
 
 usage:
-  python scripts/make_short.py init myshort/          # 台本テンプレ一式を作る
+  python scripts/make_short.py init myshort/                  # talk用テンプレ
+  python scripts/make_short.py init myshort/ --style matome   # まとめ型テンプレ
   python scripts/make_short.py build myshort/script.yaml -o out.mp4
-  python scripts/make_short.py build script.yaml --probe   # 描画せず構成だけ確認
+  python scripts/make_short.py build script.yaml --probe      # 構成だけ確認
 """
 
 import argparse
@@ -50,6 +53,43 @@ DEFAULTS = {
         "max_width_ratio": 0.88,
         "line_spacing_ratio": 0.30,
     },
+    # 画面上部に出しっぱなしにする見出し (まとめ型のスレタイ風)
+    "banner": {
+        "text": None,
+        "size_ratio": 0.042,
+        "color": "#ffe600",
+        "stroke": "#000000",
+        "stroke_width_ratio": 0.008,
+        "top_ratio": 0.045,
+        "max_chars_per_line": 13,
+        "max_width_ratio": 0.92,
+        "line_spacing_ratio": 0.25,
+    },
+    # lines の image: で出す写真の置き場とスローズーム
+    "image": {
+        "top_ratio": 0.14,
+        "height_ratio": 0.38,
+        "width_ratio": 0.92,
+        "zoom_from": 1.0,
+        "zoom_to": 1.08,
+        "zoom_step_frames": 2,   # 何フレームごとにズーム段階を進めるか
+    },
+    # style: comment の行が積み上がるカード
+    "comment": {
+        "name": "名無しさん",
+        "size_ratio": 0.030,
+        "name_size_ratio": 0.022,
+        "width_ratio": 0.92,
+        "max_visible": 3,
+        "top_ratio": 0.55,
+        "bg": "#141622",
+        "bg_alpha": 225,
+        "text_color": "#ffffff",
+        "name_color": "#8fd3ff",
+        "max_chars_per_line": 22,
+        "pad_ratio": 0.016,
+        "gap_ratio": 0.012,
+    },
     "mouth": {"threshold": 0.12, "min_hold_frames": 2},
     "gap_sec": 0.25,
     "bgm": {"file": None, "gain_db": -18.0},
@@ -70,6 +110,9 @@ FONT_CANDIDATES = [
 
 # ショート動画の上限。超えると通常動画扱いになるので警告する。
 SHORTS_MAX_SEC = 180
+
+# 音声が1本も無い台本で使うサンプリングレート
+SILENT_RATE = 24000
 
 
 class ScriptError(Exception):
@@ -128,6 +171,11 @@ def resolve_path(base_dir: Path, value) -> Path:
     """台本からの相対パスを台本ファイルの場所基準で解決する。"""
     p = Path(value)
     return p if p.is_absolute() else (base_dir / p)
+
+
+def hex_rgba(color: str, alpha: int) -> tuple:
+    c = color.lstrip("#")
+    return (int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16), alpha)
 
 
 # ---------------------------------------------------------------- 音声
@@ -226,6 +274,7 @@ def wrap_text(text: str, limit: int, font=None, max_px=None) -> list:
     def too_wide(s: str) -> bool:
         return font is not None and max_px is not None and font.getlength(s) > max_px
 
+    kinsoku = "、。，．・：；！？」』）］｝〉》ゝゞー!?),.]"  # 行頭に来させない文字
     out = []
     for para in text.split("\n"):
         para = para.strip()
@@ -235,6 +284,12 @@ def wrap_text(text: str, limit: int, font=None, max_px=None) -> list:
             take = min(len(para), limit)
             while take > 1 and too_wide(para[:take]):
                 take -= 1
+            # 次の行頭が句読点等になるなら前の行にぶら下げる(最大2文字)
+            hang = 0
+            while (take + hang < len(para) and hang < 2
+                   and para[take + hang] in kinsoku):
+                hang += 1
+            take += hang
             out.append(para[:take])
             para = para[take:]
     return out or [""]
@@ -283,43 +338,171 @@ def make_base(cfg: dict, base_dir: Path) -> Image.Image:
     return canvas
 
 
-def render_frame(base: Image.Image, char: Image.Image, cfg: dict,
-                 font: ImageFont.FreeTypeFont, text: str) -> Image.Image:
-    """背景 + 立ち絵 + 字幕 を合成した1枚を返す。"""
-    w, h = cfg["size"]
-    frame = base.copy()
+class SceneRenderer:
+    """1フレームぶんの合成を担当する。フォントと画像の縮尺はキャッシュする。"""
 
-    if char is not None:
-        ch = cfg["character"]
-        y = h - int(h * ch["bottom_margin_ratio"]) - char.height
-        if ch["align"] == "left":
-            x = int(w * 0.05)
-        elif ch["align"] == "right":
-            x = w - char.width - int(w * 0.05)
-        else:
-            x = (w - char.width) // 2
-        frame.paste(char, (x, y), char)
+    def __init__(self, cfg: dict, base_dir: Path):
+        self.cfg = cfg
+        self.base_dir = base_dir
+        self.w, self.h = cfg["size"]
+        self.base = make_base(cfg, base_dir)
+        self.char_closed, self.char_open = load_character(cfg["character"], base_dir, self.h)
+        font_path = cfg["subtitle"]["font"]
+        self.f_sub = resolve_font(font_path, max(1, int(self.h * cfg["subtitle"]["size_ratio"])))
+        self.f_banner = resolve_font(font_path, max(1, int(self.h * cfg["banner"]["size_ratio"])))
+        self.f_com = resolve_font(font_path, max(1, int(self.h * cfg["comment"]["size_ratio"])))
+        self.f_com_name = resolve_font(font_path,
+                                       max(1, int(self.h * cfg["comment"]["name_size_ratio"])))
+        self._sources = {}    # 画像パス -> 元画像
+        self._scaled = {}     # (パス, ズーム倍率) -> ボックスに切り抜いた画像
 
-    st = cfg["subtitle"]
-    draw = ImageDraw.Draw(frame)
-    font_px = max(1, int(h * st["size_ratio"]))
-    max_px = w * st["max_width_ratio"]
-    lines = wrap_text(text, st["max_chars_per_line"], font, max_px)
-    spacing = int(font_px * st["line_spacing_ratio"])
-    stroke = max(1, int(h * st["stroke_width_ratio"]))
-    total_h = len(lines) * font_px + (len(lines) - 1) * spacing
-    y = h - int(h * st["bottom_ratio"]) - total_h
-    for line in lines:
-        tw = draw.textlength(line, font=font)
-        draw.text(
-            ((w - tw) / 2, y), line, font=font, fill=st["color"],
-            stroke_width=stroke, stroke_fill=st["stroke"],
-        )
-        y += font_px + spacing
-    return frame
+    @property
+    def has_mouth(self) -> bool:
+        return self.char_closed is not None and self.char_open is not self.char_closed
+
+    def _photo(self, path: Path, zoom: float) -> Image.Image:
+        key = (str(path), round(zoom, 4))
+        if key in self._scaled:
+            return self._scaled[key]
+        if str(path) not in self._sources:
+            self._sources[str(path)] = Image.open(path).convert("RGBA")
+        src = self._sources[str(path)]
+        ic = self.cfg["image"]
+        bw = max(1, int(self.w * ic["width_ratio"]))
+        bh = max(1, int(self.h * ic["height_ratio"]))
+        s = max(bw / src.width, bh / src.height) * zoom
+        img = src.resize((max(bw, int(src.width * s)), max(bh, int(src.height * s))),
+                         Image.LANCZOS)
+        x = (img.width - bw) // 2
+        y = (img.height - bh) // 2
+        out = img.crop((x, y, x + bw, y + bh))
+        self._scaled[key] = out
+        return out
+
+    def _draw_outlined(self, draw, lines, font, color, stroke, stroke_w, y, spacing):
+        for line in lines:
+            tw = draw.textlength(line, font=font)
+            draw.text(((self.w - tw) / 2, y), line, font=font, fill=color,
+                      stroke_width=stroke_w, stroke_fill=stroke)
+            y += font.size + spacing
+        return y
+
+    def render(self, ctx: dict, mouth_open: bool, zoom: float) -> Image.Image:
+        cfg = self.cfg
+        frame = self.base.copy()
+
+        # 写真 (まとめ型のメインビジュアル)
+        if ctx["image"] is not None:
+            photo = self._photo(ctx["image"], zoom)
+            ic = cfg["image"]
+            frame.paste(photo, ((self.w - photo.width) // 2, int(self.h * ic["top_ratio"])),
+                        photo)
+
+        # 立ち絵
+        char = self.char_open if mouth_open else self.char_closed
+        if char is not None:
+            ch = cfg["character"]
+            y = self.h - int(self.h * ch["bottom_margin_ratio"]) - char.height
+            if ch["align"] == "left":
+                x = int(self.w * 0.05)
+            elif ch["align"] == "right":
+                x = self.w - char.width - int(self.w * 0.05)
+            else:
+                x = (self.w - char.width) // 2
+            frame.paste(char, (x, y), char)
+
+        draw = ImageDraw.Draw(frame)
+
+        # 見出しバナー (常時表示)
+        bn = cfg["banner"]
+        if bn["text"]:
+            lines = wrap_text(bn["text"], bn["max_chars_per_line"],
+                              self.f_banner, self.w * bn["max_width_ratio"])
+            self._draw_outlined(draw, lines, self.f_banner, bn["color"], bn["stroke"],
+                                max(1, int(self.h * bn["stroke_width_ratio"])),
+                                int(self.h * bn["top_ratio"]),
+                                int(self.f_banner.size * bn["line_spacing_ratio"]))
+
+        # ネットの反応カード
+        if ctx["comments"]:
+            self._draw_comments(frame, ctx["comments"])
+            draw = ImageDraw.Draw(frame)
+
+        # 字幕 (talk行のみ。comment行は本文がカードに出るので重ねない)
+        st = cfg["subtitle"]
+        if ctx["style"] == "talk" and ctx["text"]:
+            lines = wrap_text(ctx["text"], st["max_chars_per_line"],
+                              self.f_sub, self.w * st["max_width_ratio"])
+            spacing = int(self.f_sub.size * st["line_spacing_ratio"])
+            total_h = len(lines) * self.f_sub.size + (len(lines) - 1) * spacing
+            y = self.h - int(self.h * st["bottom_ratio"]) - total_h
+            self._draw_outlined(draw, lines, self.f_sub, st["color"], st["stroke"],
+                                max(1, int(self.h * st["stroke_width_ratio"])), y, spacing)
+        return frame
+
+    def _draw_comments(self, frame: Image.Image, comments: list) -> None:
+        cm = self.cfg["comment"]
+        cw = int(self.w * cm["width_ratio"])
+        x0 = (self.w - cw) // 2
+        pad = int(self.h * cm["pad_ratio"])
+        gap = int(self.h * cm["gap_ratio"])
+        y = int(self.h * cm["top_ratio"])
+        overlay = Image.new("RGBA", frame.size, (0, 0, 0, 0))
+        od = ImageDraw.Draw(overlay)
+        placed = []
+        for c in comments:
+            body = wrap_text(c["text"], cm["max_chars_per_line"], self.f_com, cw - 2 * pad)
+            head_h = self.f_com_name.size
+            body_h = len(body) * int(self.f_com.size * 1.25)
+            card_h = pad + head_h + pad // 2 + body_h + pad
+            od.rounded_rectangle((x0, y, x0 + cw, y + card_h), radius=int(pad * 0.8),
+                                 fill=hex_rgba(cm["bg"], int(cm["bg_alpha"])))
+            placed.append((c, body, y))
+            y += card_h + gap
+        frame.alpha_composite(overlay)
+        draw = ImageDraw.Draw(frame)
+        for c, body, cy in placed:
+            ty = cy + pad
+            draw.text((x0 + pad, ty), f"{c['no']}: {c['name']}",
+                      font=self.f_com_name, fill=cm["name_color"])
+            ty += self.f_com_name.size + pad // 2
+            for line in body:
+                draw.text((x0 + pad, ty), line, font=self.f_com, fill=cm["text_color"])
+                ty += int(self.f_com.size * 1.25)
 
 
 # ---------------------------------------------------------------- 台本読み込み
+
+
+def build_contexts(lines: list, cfg: dict, base_dir: Path) -> list:
+    """行ごとの画面状態(写真・コメントの積み上がり)を組み立てる。
+
+    image: は一度指定すると以降の行にも表示され続ける(スライド式)。
+    style: comment の行はカードとして積まれ、max_visible を超えると古い順に消える。
+    """
+    sticky_image = None
+    stack = []
+    ctxs = []
+    for i, ln in enumerate(lines, 1):
+        if ln.get("image"):
+            p = resolve_path(base_dir, ln["image"])
+            if not p.exists():
+                raise ScriptError(f"{i}番目の行の画像が見つかりません: {p}")
+            sticky_image = p
+        style = ln.get("style", "talk")
+        if style not in ("talk", "comment"):
+            raise ScriptError(f"{i}番目の行の style が不正です: {style} (talk か comment)")
+        if style == "comment":
+            stack.append({"no": len(stack) + 1,
+                          "name": ln.get("name") or cfg["comment"]["name"],
+                          "text": ln.get("text", "")})
+        ctxs.append({
+            "style": style,
+            "text": ln.get("text", ""),
+            "image": sticky_image,
+            "comments": list(stack[-int(cfg["comment"]["max_visible"]):]),
+        })
+    return ctxs
 
 
 def load_script(path: Path) -> tuple:
@@ -335,19 +518,33 @@ def load_script(path: Path) -> tuple:
     if not lines:
         raise ScriptError("台本に lines がありません。台詞を1つ以上書いてください。")
 
+    rate_hint = None
     for i, ln in enumerate(lines, 1):
-        if not ln.get("audio"):
-            raise ScriptError(f"{i}番目の台詞に audio (音声WAVのパス) がありません。")
-        wav = resolve_path(base_dir, ln["audio"])
-        if not wav.exists():
+        if ln.get("audio"):
+            wav = resolve_path(base_dir, ln["audio"])
+            if not wav.exists():
+                raise ScriptError(
+                    f"{i}番目の音声が見つかりません: {wav}\n"
+                    "Style-Bert-VITS2で書き出したWAVを置いてください。"
+                )
+            samples, rate = read_wav_mono(wav)
+            ln["_samples"], ln["_rate"] = samples, rate
+            ln["_sec"] = len(samples) / rate
+            rate_hint = rate
+        elif ln.get("duration"):
+            ln["_sec"] = float(ln["duration"])  # 無音行: 表示時間だけ指定
+        else:
             raise ScriptError(
-                f"{i}番目の音声が見つかりません: {wav}\n"
-                "Style-Bert-VITS2で書き出したWAVを置いてください。"
+                f"{i}番目の行に audio (音声WAV) か duration (表示秒数) が必要です。"
             )
-        samples, rate = read_wav_mono(wav)
-        ln["_samples"], ln["_rate"] = samples, rate
-        ln["_sec"] = len(samples) / rate
         ln.setdefault("text", "")
+
+    # 無音行に、音声行と同じレートの無音サンプルを入れる
+    for ln in lines:
+        if "_samples" not in ln:
+            rate = rate_hint or SILENT_RATE
+            ln["_samples"] = np.zeros(int(rate * ln["_sec"]), dtype=np.float32)
+            ln["_rate"] = rate
     return cfg, lines, base_dir
 
 
@@ -357,15 +554,19 @@ def load_script(path: Path) -> tuple:
 def build(args) -> int:
     script_path = Path(args.script).resolve()
     cfg, lines, base_dir = load_script(script_path)
+    ctxs = build_contexts(lines, cfg, base_dir)
 
     fps = int(cfg["fps"])
     gap = float(cfg["gap_sec"])
     total_sec = sum(ln["_sec"] for ln in lines) + gap * (len(lines) - 1)
 
-    print(f"台詞 {len(lines)}本 / 想定尺 {total_sec:.1f}秒 / {cfg['size'][0]}x{cfg['size'][1]} {fps}fps")
-    for i, ln in enumerate(lines, 1):
-        preview = ln["text"].replace("\n", " ")[:24]
-        print(f"  {i:2d}. {ln['_sec']:5.2f}秒  {preview}")
+    print(f"台詞 {len(lines)}本 / 想定尺 {total_sec:.1f}秒 / "
+          f"{cfg['size'][0]}x{cfg['size'][1]} {fps}fps")
+    for i, (ln, ctx) in enumerate(zip(lines, ctxs), 1):
+        tag = "コメ" if ctx["style"] == "comment" else "　　"
+        mark = "画" if ln.get("image") else "　"
+        preview = ln["text"].replace("\n", " ")[:22]
+        print(f"  {i:2d}. {ln['_sec']:5.2f}秒 {tag}{mark} {preview}")
     if total_sec > SHORTS_MAX_SEC:
         print(f"  ⚠ {SHORTS_MAX_SEC}秒を超えています。ショートではなく通常動画として"
               "扱われる可能性があります(投稿画面で確認してください)")
@@ -373,29 +574,28 @@ def build(args) -> int:
         return 0
 
     ffmpeg = find_ffmpeg()
-    font = resolve_font(cfg["subtitle"]["font"], max(1, int(cfg["size"][1] * cfg["subtitle"]["size_ratio"])))
-    closed, opened = load_character(cfg["character"], base_dir, cfg["size"][1])
-    base_img = make_base(cfg, base_dir)
+    renderer = SceneRenderer(cfg, base_dir)
 
     out_path = Path(args.output or script_path.with_suffix(".mp4")).resolve()
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
+    ic = cfg["image"]
+    zooming = ic["zoom_to"] > ic["zoom_from"]
+    step = max(1, int(ic["zoom_step_frames"]))
+
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
+        cache = {}
 
-        # 台詞ごと・口の開閉ごとに1枚だけ描く(同じ絵を使い回す)
-        stills = {}
-        for i, ln in enumerate(lines):
-            for state in (False, True):
-                img = render_frame(base_img, opened if state else closed, cfg, font, ln["text"])
-                p = tmp / f"f{i:04d}_{int(state)}.png"
+        def frame_file(li: int, mouth: bool, zstep: int, zoom: float) -> Path:
+            key = (li, mouth, zstep)
+            if key not in cache:
+                img = renderer.render(ctxs[li], mouth, zoom)
+                p = tmp / f"f{li:04d}_{int(mouth)}_{zstep:04d}.png"
                 img.convert("RGB").save(p)
-                stills[(i, state)] = p
-                if closed is None or opened is closed:
-                    stills[(i, True)] = p  # 口パク無しなら1枚で足りる
-                    break
+                cache[key] = p
+            return cache[key]
 
-        # フレーム列(同じ絵が続く区間はまとめる)を concat 用の一覧にする
         entries = []
 
         def push(path: Path, n: int):
@@ -406,12 +606,23 @@ def build(args) -> int:
             else:
                 entries.append([path, n])
 
-        for i, ln in enumerate(lines):
+        for li, (ln, ctx) in enumerate(zip(lines, ctxs)):
             n = max(1, int(round(ln["_sec"] * fps)))
-            for state in mouth_states(ln["_samples"], ln["_rate"], n, cfg["mouth"]):
-                push(stills[(i, state)], 1)
-            if i < len(lines) - 1:
-                push(stills[(i, False)], int(round(gap * fps)))  # 間は口を閉じる
+            states = (mouth_states(ln["_samples"], ln["_rate"], n, cfg["mouth"])
+                      if renderer.has_mouth else [False] * n)
+            line_zoom = zooming and ctx["image"] is not None
+            last = (0, ic["zoom_from"])
+            for f in range(n):
+                if line_zoom:
+                    zstep = f // step
+                    t = (zstep * step) / max(1, n - 1)
+                    zoom = ic["zoom_from"] + (ic["zoom_to"] - ic["zoom_from"]) * min(1.0, t)
+                else:
+                    zstep, zoom = 0, ic["zoom_from"]
+                last = (zstep, zoom)
+                push(frame_file(li, states[f], zstep, zoom), 1)
+            if li < len(lines) - 1:  # 行間は口を閉じ、ズームは止めたまま
+                push(frame_file(li, False, last[0], last[1]), int(round(gap * fps)))
 
         concat = tmp / "frames.txt"
         with concat.open("w", encoding="utf-8") as fh:
@@ -422,14 +633,16 @@ def build(args) -> int:
         voice = tmp / "voice.wav"
         build_voice_track(lines, gap, voice)
 
-        cmd = [ffmpeg, "-y", "-f", "concat", "-safe", "0", "-i", str(concat), "-i", str(voice)]
+        cmd = [ffmpeg, "-y", "-f", "concat", "-safe", "0", "-i", str(concat),
+               "-i", str(voice)]
         bgm = cfg["bgm"]
         if bgm.get("file"):
             bgm_path = resolve_path(base_dir, bgm["file"])
             if not bgm_path.exists():
                 raise ScriptError(f"BGMが見つかりません: {bgm_path}")
             cmd += ["-stream_loop", "-1", "-i", str(bgm_path), "-filter_complex",
-                    f"[2:a]volume={bgm['gain_db']}dB[b];[1:a][b]amix=inputs=2:duration=first[a]",
+                    f"[2:a]volume={bgm['gain_db']}dB[b];"
+                    "[1:a][b]amix=inputs=2:duration=first[a]",
                     "-map", "0:v", "-map", "[a]"]
         else:
             cmd += ["-map", "0:v", "-map", "1:a"]
@@ -437,7 +650,7 @@ def build(args) -> int:
                 "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
                 "-shortest", str(out_path)]
 
-        print(f"エンコード中… ({len(entries)}区間 / 静止画 {len(set(stills.values()))}枚)")
+        print(f"エンコード中… ({len(entries)}区間 / 静止画 {len(cache)}枚)")
         res = subprocess.run(cmd, capture_output=True, text=True)
         if res.returncode != 0:
             sys.stderr.write(res.stderr[-4000:] + "\n")
@@ -481,6 +694,62 @@ lines:
     audio: voice/002.wav
 """
 
+TEMPLATE_MATOME = """\
+# 「◯◯、〜すぎると話題に」型ショートの台本。
+# 見出し + 写真スローズーム + ネットの反応カードの構成。
+# assets/ に使う画像を置く (使用権のある画像だけを使うこと)。
+title: "まとめ型サンプル"
+fps: 30
+size: [1080, 1920]
+
+background:
+  color: "#0d0d16"
+
+# 画面上部に出しっぱなしになる見出し (スレタイの型)
+banner:
+  text: "◯◯◯◯、最高すぎると話題に"
+
+# 写真の出る位置とスローズームの強さ
+image:
+  height_ratio: 0.38
+  zoom_to: 1.08      # 1.0 にするとズームなし(書き出しが速くなる)
+
+# ネットの反応カードの見た目
+comment:
+  name: "名無しさん"   # name未指定のコメントに使う名前
+  max_visible: 3       # 同時に見えるカード数
+
+subtitle:
+  font: null           # Windowsなら自動でメイリオ等を探す
+
+# bgm:
+#   file: assets/bgm.mp3
+#   gain_db: -18
+
+lines:
+  # ナレーション行 (style省略=talk)。image: は以降の行にも表示され続ける
+  - text: "先日のイベントでの一幕が話題になっています"
+    audio: voice/001.wav
+    image: assets/photo1.png
+
+  # ネットの反応。audio で読み上げるか、duration で表示するだけかを選べる
+  - style: comment
+    text: "これは伝説"
+    audio: voice/002.wav
+  - style: comment
+    name: "風吹けば名無し"
+    text: "本人が一番楽しそうなの好き"
+    duration: 2.5
+  - style: comment
+    text: "何年経ってもすごいわ"
+    duration: 2.5
+
+  # 写真を差し替えつつ締めのナレーション
+  - text: "これからの活動にも注目です"
+    audio: voice/003.wav
+    image: assets/photo2.png
+"""
+
 
 def init(args) -> int:
     out_dir = Path(args.directory).resolve()
@@ -489,10 +758,11 @@ def init(args) -> int:
     script = out_dir / "script.yaml"
     if script.exists() and not args.force:
         raise ScriptError(f"すでにあります: {script}  (上書きするなら --force)")
-    script.write_text(TEMPLATE, encoding="utf-8")
-    print(f"✓ 台本テンプレを作成: {script}")
+    script.write_text(TEMPLATE_MATOME if args.style == "matome" else TEMPLATE,
+                      encoding="utf-8")
+    print(f"✓ 台本テンプレを作成: {script}  (style={args.style})")
     print(f"  1) {out_dir / 'voice'} に台詞WAVを置く")
-    print(f"  2) {out_dir / 'assets'} に立ち絵・背景を置く")
+    print(f"  2) {out_dir / 'assets'} に画像を置く")
     print(f"  3) python scripts/make_short.py build {script} -o out.mp4")
     return 0
 
@@ -503,6 +773,8 @@ def main() -> int:
 
     p_init = sub.add_parser("init", help="台本テンプレとフォルダ一式を作る")
     p_init.add_argument("directory")
+    p_init.add_argument("--style", choices=["talk", "matome"], default="talk",
+                        help="talk=立ち絵+字幕 / matome=見出し+写真+反応カード")
     p_init.add_argument("--force", action="store_true", help="既存のscript.yamlを上書き")
     p_init.set_defaults(func=init)
 
