@@ -21,10 +21,14 @@
 - [ ] Cubism Editor PROトライアルで1体目のマスターリグ作成（GUI作業。docs/03のチェックリストに沿ってユーザーを誘導）
 - [ ] Gemini APIキー・YouTube Data API v3キーの取得誘導 → .env設定
 - [ ] OBS設定（クロマキー）→ テスト配信
+- [ ] チャンネル企画を固める（docs/06 Step 0の表を埋める。キャラ設定＝AITuberKitの
+      システムプロンプトなので、ここが決まらないと配信内容が決まらない）
+- [ ] YouTubeチャンネル開設＋ライブ配信の有効化（docs/06。**有効化に最大24時間**
+      かかるのでモデル完成を待たず先に着手させる）
 
 ## リポジトリ構成
 
-- `docs/01〜05`: 工程順のドキュメント（発注仕様→See-through→Cubism→AITuber運用→ローカル移行）
+- `docs/01〜06`: 工程順のドキュメント（発注仕様→See-through→Cubism→AITuber運用→ローカル移行→チャンネル開設）
 - `scripts/normalize_psd.py`: PSDレイヤー正規化（inspect / normalize）。GPU不要
 - `scripts/batch_decompose.py`: 一括処理（`--normalize-only` はローカルで使う）
 - `configs/layer_mapping.yaml`: See-through V3実タグ体系に較正済み（ソース調査で検証）
