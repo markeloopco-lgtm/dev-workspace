@@ -479,17 +479,22 @@ def build_contexts(lines: list, cfg: dict, base_dir: Path) -> list:
 
     image: は一度指定すると以降の行にも表示され続ける(スライド式)。
     style: comment の行はカードとして積まれ、max_visible を超えると古い順に消える。
+    talk行で image: を指定する(=話題転換)か clear: true でカードはリセットされる。
     """
     sticky_image = None
     stack = []
     ctxs = []
     for i, ln in enumerate(lines, 1):
+        style = ln.get("style", "talk")
         if ln.get("image"):
             p = resolve_path(base_dir, ln["image"])
             if not p.exists():
                 raise ScriptError(f"{i}番目の行の画像が見つかりません: {p}")
             sticky_image = p
-        style = ln.get("style", "talk")
+            if style == "talk":
+                stack = []  # 写真が切り替わるナレーション = 話題転換なのでカードを流す
+        if ln.get("clear"):
+            stack = []
         if style not in ("talk", "comment"):
             raise ScriptError(f"{i}番目の行の style が不正です: {style} (talk か comment)")
         if style == "comment":

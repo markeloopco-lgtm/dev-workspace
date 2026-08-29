@@ -243,6 +243,18 @@ def test_matome(tmp: Path) -> None:
     check(len(ctxs2[2]["comments"]) == 1 and ctxs2[2]["comments"][0]["no"] == 2,
           "max_visibleで古いカードが消える")
 
+    # 話題転換(talk行+image)でカードがリセットされる
+    lines2 = [dict(l) for l in lines] + [
+        {"style": "talk", "text": "次の話題", "image": "assets/photo1.png",
+         "_sec": 1.0, "_samples": lines[0]["_samples"], "_rate": lines[0]["_rate"]},
+        {"style": "comment", "text": "新しい反応", "_sec": 1.0,
+         "_samples": lines[1]["_samples"], "_rate": lines[1]["_rate"]},
+    ]
+    ctxs3 = make_short.build_contexts(lines2, cfg, base_dir)
+    check(len(ctxs3[3]["comments"]) == 0, "talk行+imageで前のカードが消える")
+    check(len(ctxs3[4]["comments"]) == 1 and ctxs3[4]["comments"][0]["no"] == 1,
+          "リセット後はカード番号が1から振り直される")
+
 
 def test_missing_audio(tmp: Path) -> None:
     print("[5] 台本の不備を分かるエラーにする")
