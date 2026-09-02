@@ -99,22 +99,48 @@ def cmd_fetch(args: argparse.Namespace) -> int:
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
+    # 完了済みクエリの記録。これがあるので --resume で続きから再開できる。
+    progress_path = out.with_name(out.name + ".progress")
 
     seen: set[tuple[str, str]] = set()
-    saved = 0
+    finished: set[tuple[str, str]] = set()
+    resuming = bool(args.resume and out.exists())
+
+    if resuming:
+        with out.open(encoding="utf-8-sig", newline="") as fh:
+            for row in csv.DictReader(fh):
+                if row.get("source") and row.get("suggestion"):
+                    seen.add((row["source"], row["suggestion"]))
+        if progress_path.exists():
+            for line in progress_path.read_text(encoding="utf-8").splitlines():
+                if "\t" in line:
+                    src, qry = line.split("\t", 1)
+                    finished.add((src, qry))
+        remaining = total - len(finished)
+        print(f"再開: 既存{len(seen)}語を引き継ぎ、残り{remaining}件から続けます")
+    else:
+        progress_path.unlink(missing_ok=True)
+
+    saved = len(seen)
     done = 0
+    skipped = 0
     errors = 0
     interrupted = False
 
     # 途中で止まっても結果が残るよう、1語ずつ書き出して定期的にフラッシュする。
-    with out.open("w", encoding="utf-8-sig", newline="") as fh:
+    with out.open("a" if resuming else "w", encoding="utf-8-sig", newline="") as fh, \
+            progress_path.open("a", encoding="utf-8") as pf:
         writer = csv.DictWriter(fh, fieldnames=["source", "suggestion", "seed", "rank"])
-        writer.writeheader()
-        fh.flush()
+        if not resuming:
+            writer.writeheader()
+            fh.flush()
         try:
             for source in sources:
                 for seed, query in queries:
                     done += 1
+                    if (source, query) in finished:
+                        skipped += 1
+                        continue
                     try:
                         suggestions = fetch_suggest(query, source, timeout=args.timeout)
                     except (urllib.error.URLError, TimeoutError, OSError) as exc:
@@ -135,8 +161,11 @@ def cmd_fetch(args: argparse.Namespace) -> int:
                             {"source": source, "suggestion": text, "seed": seed, "rank": rank}
                         )
                         saved += 1
+                    # 成功したクエリだけ記録する（失敗は再開時にやり直す）
+                    pf.write(f"{source}\t{query}\n")
                     if done % 25 == 0:
                         fh.flush()
+                        pf.flush()
                         print(f"  {done}/{total} 件完了 / 収集{saved}語（ここまで保存済み）")
                     time.sleep(args.delay)
         except KeyboardInterrupt:
@@ -144,7 +173,10 @@ def cmd_fetch(args: argparse.Namespace) -> int:
             print("\n中断しました。ここまでの結果は保存されています。", file=sys.stderr)
 
     status = "中断" if interrupted else "完了"
-    print(f"{status}: {saved}語を {out} に保存（{done}/{total}件処理 / 失敗 {errors} 件）")
+    note = f" / スキップ {skipped} 件" if skipped else ""
+    print(f"{status}: {saved}語を {out} に保存（{done}/{total}件処理 / 失敗 {errors} 件{note}）")
+    if interrupted:
+        print(f"続きから再開するには、同じコマンドに --resume を足してください。")
     if not saved:
         print("1語も取れていません。ネットワーク制限やプロキシを確認してください。", file=sys.stderr)
         return 1
@@ -322,6 +354,47 @@ def cmd_selftest(_args: argparse.Namespace) -> int:
     check("report:F1は該当なし", "| F1 | 看護師 開業届 | 0 | **該当なし** |" in report, True)
     check("report:未カバー語を検出", "看護師 夜勤 つらい" in report.split("## 2.")[1], True)
 
+    # --- 中断と再開（ネットワークは差し替えて検証） ---
+    import tempfile
+
+    real_fetch, real_expanders = fetch_suggest, EXPANDERS[:]
+    with tempfile.TemporaryDirectory() as tmp:
+        tmpdir = Path(tmp)
+        seeds_file = tmpdir / "seeds.txt"
+        seeds_file.write_text("看護師\n医療\n", encoding="utf-8")
+        out_file = tmpdir / "s.csv"
+        calls: list[str] = []
+        limit = [3]
+
+        def stub(query: str, source: str, timeout: float = 10.0) -> list[str]:
+            calls.append(query)
+            if len(calls) > limit[0]:
+                raise KeyboardInterrupt
+            return [f"{query} A", f"{query} B"]
+
+        globals()["fetch_suggest"] = stub
+        globals()["EXPANDERS"] = ["あ", "い", "う", "え"]
+        try:
+            opts = argparse.Namespace(seeds=str(seeds_file), out=str(out_file), delay=0,
+                                      timeout=3, shallow=False, web=False, resume=False)
+            cmd_fetch(opts)
+            first = out_file.read_text(encoding="utf-8-sig").strip().splitlines()
+            check("resume:中断時も保存される", len(first) > 1, True)
+
+            calls.clear()
+            limit[0] = 999
+            opts.resume = True
+            cmd_fetch(opts)
+            second = out_file.read_text(encoding="utf-8-sig").strip().splitlines()
+            check("resume:済みクエリをスキップ", len(calls), 7)
+            check("resume:ヘッダが重複しない",
+                  sum(1 for line in second if line.startswith("source,")), 1)
+            check("resume:行が重複しない", len(second[1:]), len(set(second[1:])))
+            check("resume:前回分が残る", len(second) > len(first), True)
+        finally:
+            globals()["fetch_suggest"] = real_fetch
+            globals()["EXPANDERS"] = real_expanders
+
     plan_file = Path(__file__).resolve().parent.parent / "keywords" / "plan_keywords.tsv"
     if plan_file.exists():
         real_plans = load_plans(plan_file)
@@ -355,6 +428,8 @@ def main(argv: list[str] | None = None) -> int:
     p_fetch.add_argument("--timeout", type=float, default=10.0, help="タイムアウト(秒)")
     p_fetch.add_argument("--shallow", action="store_true", help="後置文字の展開をせず高速に取る")
     p_fetch.add_argument("--web", action="store_true", help="Google検索のサジェストも取る")
+    p_fetch.add_argument("--resume", action="store_true",
+                         help="前回の続きから再開する（既存CSVに追記）")
     p_fetch.set_defaults(func=cmd_fetch)
 
     p_match = sub.add_parser("match", help="サジェストと企画30本を突き合わせる")

@@ -142,14 +142,30 @@ caffeinate -i python3 youtube/tools/suggest_kit.py fetch \
 - **電源アダプタにつなぐ**。バッテリー駆動だと省電力で落ちやすい
 - 画面を今すぐ消したいなら `control + shift + 電源ボタン`
 
-### 途中で止まっても大丈夫
+### 途中で止めて、後から続きから再開できます
 
 収集結果は**1語ずつCSVに書き出しています**。
 スリープ・`control + C`・ネットワーク切断のどれで止まっても、
 **そこまでの結果はファイルに残ります**。
 
-止まった場合はそのまま `match` を実行すれば、取れた分だけで分析できます。
-やり直したい場合は、もう一度 `fetch` を実行してください（上書きされます）。
+**続きから再開するには `--resume` を足すだけです。**
+
+```bash
+# 1回目（control + C でいつでも中断してよい）
+python3 youtube/tools/suggest_kit.py fetch \
+    --seeds taishoku-kyufu/seeds.txt --out taishoku-kyufu/suggest.csv --web
+
+# 後日、続きから
+python3 youtube/tools/suggest_kit.py fetch \
+    --seeds taishoku-kyufu/seeds.txt --out taishoku-kyufu/suggest.csv --web --resume
+```
+
+完了したクエリは `<出力ファイル名>.progress` に記録されるので、
+再開時はそこをスキップします。**取り直しにならず、重複行も出ません。**
+
+- 失敗したクエリは記録しないので、再開時にやり直します
+- `--resume` を付けずに実行すると**最初からやり直し**（ファイルは上書き）
+- 中断したデータだけで分析したいときは、そのまま `match` を実行すればOK
 
 ---
 
