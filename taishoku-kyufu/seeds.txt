@@ -1,0 +1,50 @@
+# 退職給付金サポート用 サジェスト収集シード
+# 使い方（youtube/tools から実行）:
+#   python3 suggest_kit.py fetch --seeds ../../taishoku-kyufu/seeds.txt \
+#       --out ../../taishoku-kyufu/suggest.csv --web
+#   python3 suggest_kit.py match --suggest ../../taishoku-kyufu/suggest.csv \
+#       --plans ../../taishoku-kyufu/plan_keywords.tsv --out ../../taishoku-kyufu/report.md
+#
+# --web を付けるとGoogle検索のサジェストも取ります。
+# この領域は動画より記事が読まれるので、Google側が重要です。
+
+# --- Tier S：症状×お金（最優先・空白地帯） ---
+適応障害 休職
+休職 給料
+休職 生活費
+休職 保険料
+うつ 休職
+退職 貯金
+
+# --- Tier A：制度名 ---
+傷病手当金
+傷病手当金 退職後
+失業保険
+失業保険 自己都合
+特定理由離職者
+受給期間延長
+
+# --- Tier B：手続き周辺 ---
+退職後 健康保険
+任意継続
+住民税 退職後
+国民健康保険 減免
+扶養に入る
+
+# --- Tier C：感情・手前の層 ---
+会社 行きたくない
+出社拒否
+仕事 涙
+退職代行
+
+# --- Tier D：職業別 ---
+看護師 うつ
+介護士 退職
+保育士 適応障害
+教員 休職
+公務員 休職
+
+# --- 逆風の測定（ネガティブ検索の量を見る） ---
+退職給付金
+社会保険給付金サポート
+傷病手当金 サポート
