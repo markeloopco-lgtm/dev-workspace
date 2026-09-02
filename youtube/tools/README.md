@@ -121,6 +121,38 @@ python3 suggest_kit.py selftest
 
 ---
 
+## 長時間の収集を安全に回す（30分以上かかるとき）
+
+### MacBookの蓋を閉じると止まります
+
+macOSは蓋を閉じるとスリープするので、収集も止まります。
+これは `caffeinate` でも防げません（外部ディスプレイ＋電源＋外付けキーボードの
+クラムシェル環境を除く）。
+
+**蓋は開けたまま、画面だけ消す**のが正解です。
+
+```bash
+# 電源につないでから、caffeinate を付けて実行する
+cd /Users/minrai/dev-workspace
+caffeinate -i python3 youtube/tools/suggest_kit.py fetch \
+    --seeds taishoku-kyufu/seeds.txt --out taishoku-kyufu/suggest.csv --web
+```
+
+- `caffeinate -i` … 放置してもシステムがスリープしなくなる（画面は消えてOK）
+- **電源アダプタにつなぐ**。バッテリー駆動だと省電力で落ちやすい
+- 画面を今すぐ消したいなら `control + shift + 電源ボタン`
+
+### 途中で止まっても大丈夫
+
+収集結果は**1語ずつCSVに書き出しています**。
+スリープ・`control + C`・ネットワーク切断のどれで止まっても、
+**そこまでの結果はファイルに残ります**。
+
+止まった場合はそのまま `match` を実行すれば、取れた分だけで分析できます。
+やり直したい場合は、もう一度 `fetch` を実行してください（上書きされます）。
+
+---
+
 ## うまくいかないとき
 
 | 症状 | 原因と対処 |

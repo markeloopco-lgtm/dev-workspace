@@ -97,43 +97,56 @@ def cmd_fetch(args: argparse.Namespace) -> int:
     total = len(queries) * len(sources)
     print(f"シード{len(seeds)}件 / 総リクエスト{total}件 (推定 {total * args.delay / 60:.1f}分)")
 
-    rows: list[dict[str, object]] = []
-    seen: set[tuple[str, str]] = set()
-    done = 0
-    errors = 0
-    for source in sources:
-        for seed, query in queries:
-            done += 1
-            try:
-                suggestions = fetch_suggest(query, source, timeout=args.timeout)
-            except (urllib.error.URLError, TimeoutError, OSError) as exc:
-                errors += 1
-                if errors <= 5:
-                    print(f"  取得失敗 ({query}): {exc}", file=sys.stderr)
-                if errors == 20:
-                    print("  失敗が20件を超えました。ネットワークかレート制限を確認してください。", file=sys.stderr)
-                time.sleep(args.delay)
-                continue
-            for rank, text in enumerate(suggestions, start=1):
-                key = (source, text)
-                if key in seen:
-                    continue
-                seen.add(key)
-                rows.append({"source": source, "suggestion": text, "seed": seed, "rank": rank})
-            if done % 25 == 0:
-                print(f"  {done}/{total} 件完了 / 収集{len(rows)}語")
-            time.sleep(args.delay)
-
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
+
+    seen: set[tuple[str, str]] = set()
+    saved = 0
+    done = 0
+    errors = 0
+    interrupted = False
+
+    # 途中で止まっても結果が残るよう、1語ずつ書き出して定期的にフラッシュする。
     with out.open("w", encoding="utf-8-sig", newline="") as fh:
         writer = csv.DictWriter(fh, fieldnames=["source", "suggestion", "seed", "rank"])
         writer.writeheader()
-        writer.writerows(rows)
+        fh.flush()
+        try:
+            for source in sources:
+                for seed, query in queries:
+                    done += 1
+                    try:
+                        suggestions = fetch_suggest(query, source, timeout=args.timeout)
+                    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+                        errors += 1
+                        if errors <= 5:
+                            print(f"  取得失敗 ({query}): {exc}", file=sys.stderr)
+                        if errors == 20:
+                            print("  失敗が20件を超えました。ネットワークかレート制限を確認してください。",
+                                  file=sys.stderr)
+                        time.sleep(args.delay)
+                        continue
+                    for rank, text in enumerate(suggestions, start=1):
+                        key = (source, text)
+                        if key in seen:
+                            continue
+                        seen.add(key)
+                        writer.writerow(
+                            {"source": source, "suggestion": text, "seed": seed, "rank": rank}
+                        )
+                        saved += 1
+                    if done % 25 == 0:
+                        fh.flush()
+                        print(f"  {done}/{total} 件完了 / 収集{saved}語（ここまで保存済み）")
+                    time.sleep(args.delay)
+        except KeyboardInterrupt:
+            interrupted = True
+            print("\n中断しました。ここまでの結果は保存されています。", file=sys.stderr)
 
-    print(f"完了: {len(rows)}語を {out} に保存（失敗 {errors} 件）")
-    if not rows:
-        print("1語も取れていません。会社/病院のネットワーク制限やプロキシを確認してください。", file=sys.stderr)
+    status = "中断" if interrupted else "完了"
+    print(f"{status}: {saved}語を {out} に保存（{done}/{total}件処理 / 失敗 {errors} 件）")
+    if not saved:
+        print("1語も取れていません。ネットワーク制限やプロキシを確認してください。", file=sys.stderr)
         return 1
     return 0
 
