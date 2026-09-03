@@ -303,6 +303,11 @@ def build_report(plans: list[dict[str, str]], suggestions: list[dict[str, str]])
 def cmd_match(args: argparse.Namespace) -> int:
     plans = load_plans(Path(args.plans))
     suggestions = load_suggestions(Path(args.suggest))
+    if args.source:
+        before = len(suggestions)
+        suggestions = [r for r in suggestions if r.get("source") == args.source]
+        label = "YouTube検索" if args.source == "yt" else "Google検索"
+        print(f"{label}のみに絞り込み: {before}件 → {len(suggestions)}件")
     if not suggestions:
         print("サジェストCSVが空です。先に fetch を実行してください。", file=sys.stderr)
         return 1
@@ -436,6 +441,8 @@ def main(argv: list[str] | None = None) -> int:
     p_match.add_argument("--suggest", default="../keywords/suggest.csv")
     p_match.add_argument("--plans", default="../keywords/plan_keywords.tsv")
     p_match.add_argument("--out", default="../keywords/report.md")
+    p_match.add_argument("--source", choices=["yt", "web"],
+                         help="yt=YouTube検索のみ / web=Google検索のみ（動画企画はytで見る）")
     p_match.set_defaults(func=cmd_match)
 
     p_test = sub.add_parser("selftest", help="ネット接続なしで動作確認")
