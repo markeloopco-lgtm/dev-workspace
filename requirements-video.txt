@@ -1,0 +1,8 @@
+# 参考動画の編集解析用 (scripts/analyze_video.py) — docs/06参照。GPU不要・無料
+numpy
+scipy
+opencv-python-headless
+matplotlib
+imageio-ffmpeg            # ffmpeg本体を同梱(別途インストール不要)
+yt-dlp[default]>=2025.11  # YouTubeからのダウンロード(YouTube対応部品 yt-dlp-ejs 込み)
+deno                      # yt-dlpがYouTubeで使うJavaScriptランタイム
