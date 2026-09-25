@@ -10,6 +10,7 @@
 """
 
 import math
+import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -259,14 +260,27 @@ class ImageSequenceSource(FrameSource):
     """連番画像フォルダ(Blenderの書き出し等)。枚数が足りなければ最後の画で止める。"""
 
     def __init__(self, folder, n_frames: int, w: int, h: int, pattern: str = "*.png"):
-        self.files = sorted(Path(folder).glob(pattern))
+        # 番号は数値として並べる(文字列順だと frame_10000 が frame_1000 の次に来てしまう)
+        key = lambda p: [int(t) if t.isdigit() else t for t in re.split(r"(\d+)", p.name)]  # noqa: E731
+        self.files = sorted(Path(folder).glob(pattern), key=key)
         if not self.files:
             raise ValueError(f"連番画像がありません: {folder}")
         self.n_frames, self.w, self.h = n_frames, w, h
+        self._one = None
 
-    def frame(self, i):
-        f = self.files[min(i, len(self.files) - 1)]
-        img = load_image_rgb(f)
+    def _load(self, f):
+        img = cv2.imdecode(np.fromfile(str(f), dtype=np.uint8), cv2.IMREAD_UNCHANGED)
+        if img is not None and img.ndim == 3 and img.shape[2] == 3 and img.dtype == np.uint8:
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)     # Blender出力(8bit RGB)は1回の読み込みで済ませる
+        else:
+            img = load_image_rgb(f)                         # 透過・16bit・グレーは通常の読み込み
         if img.shape[1] != self.w or img.shape[0] != self.h:
             img = cover_fit(img, self.w, self.h)
         return img
+
+    def frame(self, i):
+        if len(self.files) == 1:            # 静止画1枚(動かない星空など)は読み込みを1回に
+            if self._one is None:
+                self._one = self._load(self.files[0])
+            return self._one
+        return self._load(self.files[min(i, len(self.files) - 1)])

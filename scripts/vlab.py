@@ -131,6 +131,13 @@ def cmd_voices(a):
         print(f"{sid:>4}  {name}")
 
 
+def cmd_clean_cache(a):
+    from videolab.produce.blender_runner import prune_cache
+    freed = prune_cache(Path(a.cache), max_gb=0 if a.all else a.max_gb,
+                        max_age_days=0 if a.all else a.days, keep=set())
+    print(f"Blender描画キャッシュを {freed / 1e9:.2f} GB 削除しました(音声のキャッシュは残しています)")
+
+
 def cmd_new_episode(a):
     tpl = Path(__file__).resolve().parent.parent / "episodes" / "_template.yaml"
     # タイトルに " や \ があってもYAMLが壊れないようエスケープする
@@ -244,6 +251,13 @@ def main(argv=None):
     s.add_argument("--engine", default="voicevox", choices=["voicevox", "aivis"])
     s.add_argument("--url")
     s.set_defaults(func=cmd_voices)
+
+    s = sub.add_parser("clean-cache", help="Blender描画キャッシュ(renders/cache)を掃除する")
+    s.add_argument("--all", action="store_true", help="全部消す(次回は描き直し)")
+    s.add_argument("--days", type=float, default=30, help="この日数使っていないものを消す")
+    s.add_argument("--max-gb", type=float, default=30, help="合計がこの容量を超えたら古い順に消す")
+    s.add_argument("--cache", default="renders/cache")
+    s.set_defaults(func=cmd_clean_cache)
 
     s = sub.add_parser("new-episode", help="台本の雛形を作る")
     s.add_argument("title")

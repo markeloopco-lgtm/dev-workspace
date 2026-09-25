@@ -29,7 +29,7 @@ import bpy  # noqa: E402  (bpyモジュール版では bpy を先に読み込ま
 import bmesh  # noqa: E402
 from mathutils import Matrix, Vector  # noqa: E402
 
-SCRIPT_VERSION = 3
+SCRIPT_VERSION = 4
 
 
 # ================================================================ 引数・色
@@ -800,7 +800,8 @@ def halo_material(col_hex, spin, tval_node):
 
 # ================================================================ 星の前進飛行
 
-def build_flight(spec, p, n_frames, fps, vfov):
+def build_flight(spec, p, n_frames, fps, vfov, cam_y0=0.0):
+    """前進飛行の星。cam_y0 はカメラの最初の位置(星はそこから z_near 先から並べる)。"""
     import random
     rng = random.Random(spec["seed"] * 7919 + 5)
     speed = p["speed"]
@@ -818,7 +819,7 @@ def build_flight(spec, p, n_frames, fps, vfov):
     for i in range(count):
         x = rng.uniform(-spread, spread)
         z = rng.uniform(-spread / aspect * 1.3, spread / aspect * 1.3)
-        y = rng.uniform(z_near, length)
+        y = cam_y0 + rng.uniform(z_near, length)
         b = 0.35 + 0.65 * rng.random() ** 1.5
         tcol = rgba(_STAR_RAMP[min(len(_STAR_RAMP) - 1, int(rng.random() * len(_STAR_RAMP)))][1])
         colv = mix_col((1, 1, 1, 1), tcol, min(1.0, cvar * 1.5))
@@ -963,9 +964,11 @@ def setup_render(scene, spec):
             im.media_type = "IMAGE"
         except TypeError:
             pass
-    im.file_format = "PNG"
+    # JPEG(品質95)で書き出す。PNGの約1/7の容量で、最終的なH.264の画質には影響しない
+    im.file_format = "JPEG"
     im.color_mode = "RGB"
-    im.color_depth = "8"
+    if hasattr(im, "quality"):
+        im.quality = 95
     r.film_transparent = False
     if hasattr(r, "use_motion_blur"):
         r.use_motion_blur = False
@@ -1030,7 +1033,10 @@ def build_scene(spec):
         body = uv_sphere("sun_body", 128, 64)
         body.parent = root
         body.data.materials.append(sun_material(p["color"], p["activity"]))
-        shell_r = 4.0
+        # カメラが殻の内側に入ると裏面しか描かれずコロナが消えるので、最も近いカメラ位置より内側に収める
+        s_max = max(max(1e-3, fr[0]) for fr in spec["camera_track"])
+        d_min = D / s_max ** (1.0 - spec["bg_share"])
+        shell_r = max(1.05, min(4.0, 0.9 * d_min / rad))
         cor = uv_sphere("corona", 96, 48, shell_r)
         cor.parent = root
         cor.data.materials.append(corona_material(p["color"], p["activity"], shell_r))
@@ -1058,8 +1064,13 @@ def build_scene(spec):
         disk = annulus("bh_disk", R_IN * 0.95, R_OUT, 384, 24)
         disk.parent = tilt
         disk.data.materials.append(disk_material(p["disk_color"], p.get("spin_speed", 1.0), tvals))
+        # 光の輪はカメラの方を向かせる(TRACK_TO)。向きの拘束で傾き(roll)が消えないよう、
+        # 拘束は中間の空オブジェクトにかけ、輪はその子として roll 分だけ回す
+        halo_track = empty("bh_halo_track", (0, 0, 0))
+        halo_track.parent = root
         halo = annulus("bh_halo", 0.96, 2.4, 384, 16)
-        halo.parent = root
+        halo.parent = halo_track
+        halo.rotation_euler = (0.0, 0.0, math.radians(p.get("roll", 0.0)))
         halo.data.materials.append(halo_material(p["disk_color"], p.get("spin_speed", 1.0), tvals))
         pivot = c
     cam_data = bpy.data.cameras.new("cam")
@@ -1071,12 +1082,13 @@ def build_scene(spec):
     cam.rotation_mode = "XYZ"
     scene.camera = cam
     if tpl == "black_hole":
-        halo = bpy.data.objects["bh_halo"]
+        halo = bpy.data.objects["bh_halo_track"]
         con = halo.constraints.new("TRACK_TO")
         con.target = cam
         con.track_axis = "TRACK_Z"
         con.up_axis = "UP_Y"
-    speed = build_flight(spec, p, n, fps, vfov) if flight else 0.0
+    s0 = max(1e-3, spec["camera_track"][0][0])
+    speed = build_flight(spec, p, n, fps, vfov, -D / s0 ** (1.0 - spec["bg_share"])) if flight else 0.0
     animate_camera(cam, spec, pivot, D, vfov, speed)
     for f in range(n):                                     # 円盤の時間(差動回転)
         for tv in tvals:
@@ -1085,18 +1097,35 @@ def build_scene(spec):
     return scene, engine_used
 
 
+def frame_complete(path) -> bool:
+    """書き出しが最後まで終わった画像か(途中で止まった書きかけを「完成」と数えない)。"""
+    try:
+        with open(path, "rb") as fh:
+            fh.seek(-12, 2)
+            tail = fh.read()
+    except OSError:
+        return False
+    return tail.endswith(b"\xff\xd9") or tail == b"\x00\x00\x00\x00IEND\xaeB`\x82"
+
+
 def render_frames(scene, out_dir: Path, frames=None):
+    import os
+
     n = scene.frame_end
     todo = list(range(1, n + 1)) if frames is None else frames
     t0 = time.time()
     done = 0
     for f in todo:
-        path = out_dir / f"frame_{f:04d}.png"
-        if path.exists() and path.stat().st_size > 0:
+        path = out_dir / f"frame_{f:05d}.jpg"
+        if frame_complete(path):
             continue
         scene.frame_set(f)
-        scene.render.filepath = str(path)
+        tmp = out_dir / f"tmp_{f:05d}.jpg"      # 別名に書いてから置き換える(書きかけを残さない)
+        scene.render.filepath = str(tmp)
         bpy.ops.render.render(write_still=True)
+        if not frame_complete(tmp):
+            raise RuntimeError(f"画像の書き出しが途中で終わりました: {tmp}")
+        os.replace(tmp, path)
         done += 1
         el = time.time() - t0
         print(f"VL_PROGRESS {f} {n} {el / done:.2f}", flush=True)

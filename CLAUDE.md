@@ -77,6 +77,10 @@
   無料枠の回数はAI Studioで確認（固定値を書かない）。無料枠の入力はGoogleの改善に使われる → annotateは同意制
 - Blender: 5.2 LTSを想定。EEVEEのID は5.x `BLENDER_EEVEE` / 4.2〜4.5 `BLENDER_EEVEE_NEXT`。
   コンポジターAPIは5.0で変わったので使わない
+- 宇宙シーン: `videolab/produce/space.py` が窓口(2D版 space2d / Blender版 blender_space+blender_runner)。
+  カメラ量は「解析で測れる動き」に揃えるため奥行きぶん補正(compensate_parallax)。Blender出力はJPEG連番、
+  キャッシュは `renders/cache/<hash>/`(自動掃除・`vlab clean-cache`)。Blender 5.0.1(bpy)でCycles動作確認済み、
+  4.2〜4.5と実機EEVEE(GPU)は未検証
 - VOICEVOX: ちび式じい・玄野武宏・麒ヶ島宗麟は商用可（「VOICEVOX:名前」表記）。青山龍星は事業利用に事前確認
 - YouTube収益化: 2026-07から「汎用的・繰り返しの多いコンテンツ」と「AIペルソナが健康・法律・金融の助言」は対象外
 - PowerShellの実行ポリシーで Activate.ps1 が動かないことがある → `.venv-video\Scripts\python.exe` を直接使う

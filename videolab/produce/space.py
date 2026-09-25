@@ -29,6 +29,7 @@
             残りをドリー/トラック(カメラ移動=天体だけが動く)で表現する
 """
 
+import dataclasses
 import math
 import sys
 from pathlib import Path
@@ -296,7 +297,6 @@ def resolve_params(template: str, params: dict = None) -> dict:
             out["atm_strength"] = max(0.5, pr["atm_strength"])
         else:
             out["atm_strength"] = pr["atm_strength"] if out["atmosphere"] else 0.0
-        out["size"] = max(0.01, out["size"])
     elif template == "planet_compare":
         a, b = out["presets"]
         if out["size_ratio"] == "auto":
@@ -307,6 +307,11 @@ def resolve_params(template: str, params: dict = None) -> dict:
     elif template == "starfield":
         out["color_variation"] = min(1.0, max(0.0, out["color_variation"]))
         out["speed"] = max(0.0, out["speed"])
+    if "size" in out and out["size"] <= 0:
+        raise ValueError(f"space/{template}.size は0より大きい数値で指定してください"
+                         f"(画面の高さに対する比。例 0.6): {out['size']}")
+    if "separation" in out:
+        out["separation"] = max(0.0, out["separation"])
     for k in ("stars", "density"):
         if k in out:
             out[k] = max(0.0, out[k])
@@ -367,6 +372,37 @@ def sun_vector(sun_angle: float, sun_elevation: float, orbit_deg: float = 0.0):
 
 # ---------------------------------------------------------------- 窓口
 
+# engine="auto" でBlenderが失敗した (テンプレート, エンジン) を覚えておき、同じ実行中は
+# 起動し直さない(1ショットごとに起動→失敗を繰り返して時間を浪費しないため)
+_BLENDER_FAILED = {}
+_FALLBACK_SHOTS = [0]
+
+
+def reset_auto_state():
+    _BLENDER_FAILED.clear()
+    _FALLBACK_SHOTS[0] = 0
+
+
+def fallback_count() -> int:
+    """この実行中、Blenderの失敗で2dに切り替えたショット数。"""
+    return _FALLBACK_SHOTS[0]
+
+
+def compensate_parallax(cam: CameraMove, k: float) -> CameraMove:
+    """星空に奥行き(パララックス)があるぶん、背景の動きが指定量どおりになるよう動きを増やす。
+
+    解析(estimate_camera)は画面全体=主に星の動きを測るので、amount は「解析で測れる動き」を
+    意味するように揃える(天体そのものは奥行きのぶん大きく動く)。構図(frame_*)は変えない。
+    """
+    if k <= 0 or k >= 1:
+        return cam
+    if cam.kind.startswith("zoom"):
+        return dataclasses.replace(cam, amount=(1.0 + cam.amount) ** (1.0 / k) - 1.0)
+    if cam.kind.startswith(("pan", "tilt")):
+        return dataclasses.replace(cam, amount=cam.amount / k)
+    return cam
+
+
 def make_space_source(template: str, params: dict, n_frames: int, w: int, h: int, fps: float,
                       cam: CameraMove = None, engine: str = "auto", seed: int = 0,
                       cache_dir: Path = Path("renders/cache")):
@@ -384,18 +420,26 @@ def make_space_source(template: str, params: dict, n_frames: int, w: int, h: int
             raise FileNotFoundError(blender_runner.INSTALL_HINT)
         if exe is not None:
             render_engine = "cycles" if engine == "cycles" else "eevee"
-            try:
-                return blender_runner.render_space(template, p, n_frames, w, h, fps, cam, seed=seed,
-                                                   cache_dir=Path(cache_dir), engine=render_engine,
-                                                   blender=exe)
-            except (RuntimeError, OSError) as e:
-                if engine != "auto":
-                    raise
-                print(f"  [注意] Blenderでの描画に失敗したので2d描画に切り替えます: {str(e).splitlines()[0]}",
-                      file=sys.stderr, flush=True)
+            key = (template, render_engine)
+            if engine == "auto" and key in _BLENDER_FAILED:
+                _FALLBACK_SHOTS[0] += 1        # 既に失敗済み → 起動せず2dへ
+            else:
+                try:
+                    return blender_runner.render_space(
+                        template, p, n_frames, w, h, fps, compensate_parallax(cam, BLENDER_BG_SHARE),
+                        seed=seed, cache_dir=Path(cache_dir), engine=render_engine, blender=exe)
+                except (RuntimeError, OSError) as e:
+                    if engine != "auto":
+                        raise
+                    first = str(e).splitlines()[0] if str(e) else e.__class__.__name__
+                    _BLENDER_FAILED[key] = first
+                    _FALLBACK_SHOTS[0] += 1
+                    print(f"\n  [注意] Blenderでの描画に失敗したので、この実行中の {template} は2dで描きます: "
+                          f"{first}", file=sys.stderr, flush=True)
     from .space2d import Space2DSource
 
-    return Space2DSource(template, p, n_frames, w, h, fps, cam, seed=seed)
+    return Space2DSource(template, p, n_frames, w, h, fps,
+                         compensate_parallax(cam, sum(STAR_PARALLAX) / 2), seed=seed)
 
 
 def describe_templates() -> str:

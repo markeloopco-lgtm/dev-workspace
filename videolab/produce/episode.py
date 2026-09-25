@@ -190,4 +190,13 @@ def _norm_visual(v, base: Path, where: str, ep: dict, allow_missing: bool) -> di
                     continue
                 out.append(_file(it, base, f"{where}.params.{key}"))
             params[key] = out if isinstance(val, (list, tuple)) else out[0]
+        # 描画の途中ではなく読み込み時に、テンプレート名・パラメータの誤りを知らせる
+        from .space import TEMPLATES, resolve_params
+        if v["template"] not in TEMPLATES:
+            raise EpisodeError(f"{where}: 未知のテンプレート '{v['template']}' "
+                               f"(使えるもの: {', '.join(TEMPLATES)})")
+        try:
+            resolve_params(v["template"], params)
+        except ValueError as e:
+            raise EpisodeError(f"{where}: {e}") from e
     return v

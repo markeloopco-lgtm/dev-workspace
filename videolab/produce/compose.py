@@ -4,11 +4,14 @@
 ffmpegの複雑なフィルタ指定(Windowsでのパスのエスケープ問題)を避けるため。
 """
 
+import contextlib
 import json
+import os
 import subprocess
 import sys
 import tempfile
 import time
+import zlib
 from pathlib import Path
 
 import numpy as np
@@ -52,8 +55,38 @@ def _base_source(shot, w: int, h: int, fps: float, engine: str, cache_dir: Path)
         make_space_source = _space_factory()
         return make_space_source(v.get("template", "planet"), dict(v.get("params") or {}), n, w, h,
                                  fps, cam, engine=v.get("engine", engine),
-                                 seed=int(v.get("seed", shot.seed)), cache_dir=cache_dir)
+                                 seed=int(v.get("seed", _visual_seed(v))), cache_dir=cache_dir)
     raise ValueError(f"未知の映像タイプ: {t}")
+
+
+def _visual_seed(v: dict) -> int:
+    """素材の中身から決まる seed。ショット番号に依存しないので、台本の前の方を直しても
+    同じ素材の星空は変わらず、Blenderの描画キャッシュも再利用されやすい。"""
+    key = json.dumps({"t": v.get("template"), "p": v.get("params")}, sort_keys=True,
+                     ensure_ascii=False, default=str)
+    return zlib.crc32(key.encode("utf-8")) & 0x7FFFFFFF
+
+
+@contextlib.contextmanager
+def keep_awake():
+    """長い書き出しの間、Windowsが自動でスリープしないようにする(画面は消えてよい)。"""
+    if os.name != "nt":
+        yield
+        return
+    import ctypes
+
+    try:
+        f = ctypes.windll.kernel32.SetThreadExecutionState
+        f.argtypes = [ctypes.c_uint]
+        f.restype = ctypes.c_uint
+        f(0x80000000 | 0x00000001)          # ES_CONTINUOUS | ES_SYSTEM_REQUIRED
+    except Exception:  # noqa: BLE001
+        f = None
+    try:
+        yield
+    finally:
+        if f is not None:
+            f(0x80000000)
 
 
 def encoder_args(encoder: str, draft: bool) -> list:
@@ -82,6 +115,11 @@ def render_video(plan, audio_wav: Path, out_path: Path, engine: str = "auto",
     errf = tempfile.TemporaryFile()      # stderrをパイプにすると詰まることがあるので一時ファイルへ
     proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=errf)
     broken = False
+    try:
+        from .space import reset_auto_state
+        reset_auto_state()
+    except ImportError:
+        pass
     shots = plan.shots
     live = {}
     t0 = time.time()
@@ -131,6 +169,15 @@ def render_video(plan, audio_wav: Path, out_path: Path, engine: str = "auto",
         errf.close()
     if not quiet:
         sys.stderr.write("\n")
+    try:
+        from .space import fallback_count
+        nfb = fallback_count()
+        if nfb:
+            print(f"      注意: Blenderが失敗したため {nfb} ショットを2Dで描きました。見た目を揃えるなら"
+                  "原因を直して再実行(描画済みはキャッシュを再利用)するか --engine 2d で統一してください",
+                  flush=True)
+    except ImportError:
+        pass
     if rc != 0 or broken:
         hint = ""
         if encoder == "nvenc":
@@ -197,6 +244,21 @@ def produce_episode(episode_path, style_path=None, out_path=None, tts: str = Non
                     engine: str = "auto", encoder: str = "x264", draft: bool = False,
                     quiet: bool = False) -> dict:
     """台本YAMLから完成動画を作る。返り値: 出力ファイル類のパスと統計。"""
+    with keep_awake():
+        res = _produce_episode(episode_path, style_path, out_path, tts, engine, encoder, draft,
+                               quiet)
+    try:
+        from .blender_runner import prune_cache
+        freed = prune_cache(Path("renders/cache"))
+        if freed and not quiet:
+            print(f"      古いBlender描画キャッシュを {freed / 1e9:.1f} GB 削除しました", flush=True)
+    except ImportError:
+        pass
+    return res
+
+
+def _produce_episode(episode_path, style_path, out_path, tts, engine, encoder, draft,
+                     quiet) -> dict:
     from ..profile import load_profile
 
     say = (lambda *a: None) if quiet else (lambda *a: print(*a, flush=True))

@@ -562,7 +562,7 @@ def _tex_lava(tw, seed, c, pr):
     return PlanetTexture(tw, surface, _height_to_bump(height), None, _u8(np.clip(em, 0, 1)), 0.55)
 
 
-@lru_cache(maxsize=6)
+@lru_cache(maxsize=12)
 def planet_texture(preset: str, seed: int, tw: int, clouds: bool, night_lights: bool,
                    texture_path: str = None) -> PlanetTexture:
     """プリセット(または画像)から地表テクスチャを作る。同じ引数なら使い回す。"""
@@ -1105,6 +1105,8 @@ class PlanetBody:
         M = self.M
         c0, c2 = M[:, 0], M[:, 2]
         det = c0[0] * c2[1] - c2[0] * c0[1]
+        if abs(float(det)) < 1e-6:        # 真横(inclination=0)の環は逆行列が無い → 見えない線として扱う
+            det = F32(math.copysign(1e-6, float(det)) if det else 1e-6)
         X = (g.X * c2[1] - g.Y * c2[0]) / det
         Z = (c0[0] * g.Y - c0[1] * g.X) / det
         zv = c0[2] * X + c2[2] * Z                            # 環の点の手前方向の深さ
@@ -1249,6 +1251,14 @@ class PlanetBody:
 
 # ================================================================ 太陽
 
+@lru_cache(maxsize=4)
+def _sun_texture(tw: int, seed: int, activity: float) -> np.ndarray:
+    """太陽の表面テクスチャ(粒状斑・黒点)。重いので同じ引数なら使い回す。"""
+    tex = SunBody._texture(tw, seed, activity)
+    tex.setflags(write=False)
+    return tex
+
+
 class SunBody:
     """太陽(恒星): 周縁減光・粒状斑(ゆらぐ)・黒点・白斑・プロミネンス・コロナ・にじみ。"""
 
@@ -1266,7 +1276,7 @@ class SunBody:
         tw = 512
         while tw < TAU * Rr * 0.9 and tw < 2048:
             tw *= 2
-        self.tex = self._texture(tw, seed, activity)
+        self.tex = _sun_texture(tw, int(seed), round(float(activity), 3))
         center_col = _mix(self.base, np.ones(3, F32), F32(0.5)) * F32(1.08)
         mid_col = self.base * F32(1.12)
         limb_col = np.power(self.base, F32(2.6)) * F32(0.95)
@@ -1292,7 +1302,8 @@ class SunBody:
         self._streamer2 = rng.random(48).astype(F32)
         self._corona_key = None
 
-    def _texture(self, tw, seed, activity):
+    @staticmethod
+    def _texture(tw, seed, activity):
         rng = np.random.default_rng(seed + 500)
         ga = sphere_fbm(tw, 55.0, 2, seed + 1, gain=0.45)
         gb = sphere_fbm(tw, 55.0, 2, seed + 2, gain=0.45)
@@ -1689,11 +1700,14 @@ class Space2DSource(FrameSource):
         self.bg = StarBackground(w, h, self.seed, density, p.get("nebula", 0.12), cvar, margin,
                                  milky_way=True)
         self.objs = []
+        # 天体の表面(大陸・クレーター・黒点)は素材ごとに固定する。ショット毎の seed は星空だけに使う
+        # (同じ惑星のカットごとに地形が変わる「つながりの誤り」を防ぎ、表面テクスチャのキャッシュも効く)
+        body_seed = 0
         if template == "planet":
             self.objs.append(self._planet(p["preset"], p["texture"], p["size"] * h,
                                           tuple(p["position"]), p, p["atmosphere"], p["atm_strength"],
                                           p["rings"], p["tilt"], p["inclination"], p["clouds"],
-                                          p["night_lights"], p["longitude"], s_max, self.seed))
+                                          p["night_lights"], p["longitude"], s_max, body_seed))
         elif template == "planet_compare":
             for k, (cx, cy, dia) in enumerate(compare_layout(p, w, h)):
                 name = p["presets"][k]
@@ -1703,14 +1717,15 @@ class Space2DSource(FrameSource):
                     name, tex, dia * h, (cx, cy), p, pr["atmosphere"],
                     pr["atm_strength"] if pr["atmosphere"] else 0.0, pr["rings"], pr["tilt"],
                     pr["inclination"], pr["clouds"] and not tex, pr["night_lights"] and not tex,
-                    pr.get("longitude", 0.0), s_max, self.seed + 17 * k))
+                    pr.get("longitude", 0.0), s_max,
+                    body_seed + (17 * k if p["presets"][0] != p["presets"][-1] else 0)))
         elif template == "sun":
             self.objs.append(SunBody(p["color"], p["activity"], p["size"] * h, tuple(p["position"]),
-                                     p["rotation_speed"], self.seed, s_max))
+                                     p["rotation_speed"], body_seed, s_max))
         elif template == "black_hole":
             self.objs.append(BlackHoleBody(p["disk_color"], p["tilt"], p["roll"], p["size"] * h,
                                            tuple(p["position"]), p["spin_speed"], p["lensing"],
-                                           self.seed, s_max))
+                                           body_seed, s_max))
         elif template == "starfield":
             if p["speed"] > 0:
                 self.objs.append(WarpStars(w, h, self.seed, p["density"], p["speed"],

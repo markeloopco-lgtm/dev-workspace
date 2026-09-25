@@ -48,13 +48,22 @@ def _version_key(path: str):
 
 def find_blender():
     """Blender本体(またはそれを起動するランチャー)のパス。見つからなければ None。"""
-    env = os.environ.get("BLENDER")
+    # エクスプローラーの「パスのコピー」で付く "" や前後の空白を取り除く
+    env = (os.environ.get("BLENDER") or "").strip().strip('"').strip("'").strip()
     if env:
-        if Path(env).exists():
-            return env
+        p = Path(env)
+        if p.is_dir():          # インストール先フォルダを指定された場合
+            for name in ("blender.exe", "blender", "Contents/MacOS/Blender"):
+                if (p / name).is_file():
+                    return str(p / name)
+        elif p.is_file():
+            return str(p)
         w = shutil.which(env)
         if w:
             return w
+        print(f"  [注意] 環境変数 BLENDER={env!r} は blender.exe として使えません"
+              "(blender.exe までのフルパスを設定してください)。ほかの場所を探します",
+              file=sys.stderr, flush=True)
     w = shutil.which("blender")
     if w:
         return w
@@ -119,12 +128,59 @@ def spec_hash(spec: dict) -> str:
     return h.hexdigest()[:16]
 
 
+FRAME_GLOB = "frame_*.jpg"
+_USED_KEYS = set()          # この実行で使ったキャッシュ(掃除の対象から外す)
+
+
+def _frame_ok(path: Path) -> bool:
+    try:
+        with open(path, "rb") as fh:
+            fh.seek(-2, 2)
+            return fh.read() == b"\xff\xd9"       # JPEGの終端マーカー = 書き出し完了
+    except OSError:
+        return False
+
+
 def _is_done(folder: Path, n_frames: int) -> bool:
     try:
         d = json.loads((folder / "done.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return False
-    return int(d.get("frames", -1)) == n_frames and len(list(folder.glob("frame_*.png"))) >= n_frames
+    files = sorted(folder.glob(FRAME_GLOB))
+    return (int(d.get("frames", -1)) == n_frames and len(files) >= n_frames
+            and all(_frame_ok(f) for f in files))
+
+
+def prune_cache(cache_dir: Path, max_gb: float = 30.0, max_age_days: float = 30.0,
+                keep: set = None) -> int:
+    """Blender描画キャッシュ(renders/cache/<16桁>/)のうち、古いもの・容量超過分を消す。
+
+    音声のキャッシュ(renders/cache/tts)には触らない。今回使ったものは消さない。
+    返り値: 削除したバイト数。
+    """
+    cache_dir = Path(cache_dir)
+    if not cache_dir.is_dir():
+        return 0
+    keep = set(keep if keep is not None else _USED_KEYS)
+    items = []
+    for d in cache_dir.iterdir():
+        if not (d.is_dir() and re.fullmatch(r"[0-9a-f]{16}", d.name) and (d / "spec.json").exists()):
+            continue
+        stamp = d / "done.json" if (d / "done.json").exists() else d / "spec.json"
+        size = sum(f.stat().st_size for f in d.iterdir() if f.is_file())
+        items.append((stamp.stat().st_mtime, size, d))
+    items.sort()                           # 古い順
+    total = sum(sz for _, sz, _ in items)
+    now = time.time()
+    freed = 0
+    for mtime, size, d in items:
+        if d.name in keep:
+            continue
+        if now - mtime > max_age_days * 86400 or total > max_gb * 1e9:
+            shutil.rmtree(d, ignore_errors=True)
+            total -= size
+            freed += size
+    return freed
 
 
 def run_blender(blender: str, spec_path: Path, out_dir: Path, n_frames: int, log_path: Path,
@@ -180,15 +236,27 @@ def render_space(template: str, params: dict, n_frames: int, w: int, h: int, fps
         raise FileNotFoundError(INSTALL_HINT)
     cam = cam or CameraMove()
     spec = build_spec(template, params, n_frames, w, h, fps, cam, seed, engine, samples)
+    track = spec["camera_track"]
+    if (template == "starfield" and spec["params"].get("speed", 0) <= 0
+            and all(r == track[0] for r in track)):
+        # 動かない星空は全フレーム同じ画 → 1枚だけ描いて使い回す(ショットの長さにも依存しない)
+        spec["n_frames"], spec["camera_track"] = 1, track[:1]
+    render_n = spec["n_frames"]
     key = spec_hash(spec)
+    _USED_KEYS.add(key)
     folder = Path(cache_dir) / key
-    if not _is_done(folder, n_frames):
+    if not _is_done(folder, render_n):
         folder.mkdir(parents=True, exist_ok=True)
         spec_path = folder / "spec.json"
         spec_path.write_text(json.dumps(spec, ensure_ascii=False, indent=1), encoding="utf-8")
         if not quiet:
-            print(f"      Blenderで描画: {template} {w}x{h} {n_frames}フレーム → {folder}", flush=True)
-        run_blender(blender, spec_path, folder, n_frames, folder / "blender.log", quiet)
-    elif not quiet:
-        print(f"      Blender描画のキャッシュを使用: {folder}", flush=True)
-    return ImageSequenceSource(folder, n_frames, w, h, pattern="frame_*.png")
+            print(f"      Blenderで描画: {template} {w}x{h} {render_n}フレーム → {folder}", flush=True)
+        run_blender(blender, spec_path, folder, render_n, folder / "blender.log", quiet)
+    else:
+        try:
+            os.utime(folder / "done.json", None)     # 最近使った印(古いキャッシュの掃除用)
+        except OSError:
+            pass
+        if not quiet:
+            print(f"      Blender描画のキャッシュを使用: {folder}", flush=True)
+    return ImageSequenceSource(folder, n_frames, w, h, pattern=FRAME_GLOB)
