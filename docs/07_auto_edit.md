@@ -325,6 +325,50 @@ python scripts/auto_edit.py render 録画.mp4
 タイミング(時刻)は**カット前の動画基準**のまま直せばよい。
 カット後のどこに出すかはツールが自動で計算する。
 
+## 参考動画と同じ見た目にする（新しいpresetを作る）
+
+お手本の動画を docs/06 の手順で分析し、`frames` の書き出しで見えたテロップの様式を
+`configs/auto_edit.yaml` 末尾の `presets:` に**新しい名前で**書き足す。書いた項目だけが既定値を上書きする。
+
+```yaml
+presets:
+  ref_sample:          # 名前は自由。使うときは --preset ref_sample（常に使うなら先頭の preset: を書き換える）
+    style:
+      font_candidates: [Dela Gothic One]
+      font_size_ratio: 0.07
+      text_color: "FFFFFF"
+      outline_color: "1A1A1A"
+      outline_em: 0.08
+    band:
+      enabled: false
+```
+
+| 参考動画で見る所 | 書く項目 |
+|---|---|
+| 書体の系統（角ゴシック・丸ゴシック・手書き風など） | `style.font_candidates`（近い無料フォントを `scripts/fetch_fonts.py` で取得） |
+| 文字の大きさ（1文字の高さ ÷ 画面の高さが目安） | `style.font_size_ratio`（2行のとき別なら `font_size_ratio_wrapped`） |
+| 文字色・縁取りの色と太さ（縁の太さ ÷ 文字の大きさ） | `style.text_color` / `outline_color` / `outline_em` |
+| 二重の縁取り | `style.double_outline` / `double_outline_color` |
+| 影・ぼかし | `style.shadow_em` / `shadow_opacity` / `blur` |
+| 字間・行間 | `style.tracking_em` / `line_height_em` |
+| 位置（文字の下端 ÷ 画面の高さ） | `style.position_ratio` |
+| 座布団・帯（色・濃さ・文字幅に合わせるか・角丸） | `band.enabled` / `color` / `opacity` / `fit_width` / `corner_radius_em` |
+| 1行の文字数・行数・表示時間 | `telop.max_chars_per_line` / `max_lines` / `min_duration` / `max_duration` |
+| 出方・消え方 | `telop.fade_in` / `fade_out`（フェードのみ対応） |
+| キーワードの色替え | `emphasis.*` |
+| ツッコミ・要点で見た目が変わる | `scenes.*`（SRTの行頭記号で切替） |
+| 話者ごとの色分け | `speakers` / `speaker_color_target` |
+| 画面端の見出し・番組名 | `side.*` / `title.*` |
+| カットの詰め方（言葉と言葉の間に残す長さ） | `jetcut.min_silence` / `keep_padding_frames` / `join_gap` |
+| BGMの大きさ | `bgm.volume_db` / `ducking` |
+
+`python scripts/auto_edit.py preview --preset ref_sample --text "自分の文言"` の画像を、
+`frames` で書き出した参考フレームと並べて見比べ、差が無くなるまで数値を詰める。
+
+いまの auto_edit.py に**無い**演出: ポップ（拡大しながら出る）・スライドなどの動き、ズーム、効果音、画像の挿入。
+参考動画がこれらを多用していれば、必要な分だけ追加実装する。
+真似るのは様式（作り方）だけで、参考動画の文字・映像・音声そのものは使わない（docs/06「注意」）。
+
 ## 調整のしかた
 
 設定は `configs/auto_edit.yaml`。よくある症状と対処:

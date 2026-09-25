@@ -92,6 +92,8 @@ Claude Code に頼む例:「work/XXXXXXXXXXX/source_report を読んで、同じ
 - 数値は report.md の10章「目標値」が土台
 - 数値で測れない所（字幕の書体・色・縁取り、素材の種類、加工、BGMの雰囲気）は、
   代表フレーム一覧と frames の書き出しを Claude が見て言葉にする（report.md 9章のチェックリスト）
+- テロップ・カットの詰め方・BGMの様式は、docs/07「参考動画と同じ見た目にする」の対応表で
+  `configs/auto_edit.yaml` のpresetに書くと、自分の録画に `auto_edit.py` で同じ見た目を付けられる
 
 ## Step 5: 自分の動画と比べる
 

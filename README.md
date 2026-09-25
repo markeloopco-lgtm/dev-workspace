@@ -30,6 +30,7 @@ AITuberKitで自動運用配信               ← docs/04
 
 お手本にしたい動画は `scripts/analyze_video.py` でフレーム単位に分析し、
 編集テンポ・つなぎ方・画面配置・色・音量の目標値を作れる（[docs/06](docs/06_reference_video_analysis.md)）。
+分析したテロップの様式を自動編集のpresetに書けば、自分の録画に同じ見た目で付けられる（[docs/07](docs/07_auto_edit.md)）。
 
 ## セットアップ
 
@@ -79,7 +80,8 @@ export SEE_THROUGH_DIR=/path/to/see-through
 ```
 
 テロップの様式は `--preset` で切り替える:
-`talk`(対談・話者を色分け・既定) / `business`(ビジネス系YouTube) / `news`(報道番組風)
+`talk`(対談・話者を色分け・既定) / `business`(ビジネス系YouTube) / `news`(報道番組風)。
+参考動画の分析結果から `configs/auto_edit.yaml` に新しいpresetを書けば、同じ見た目のテロップを付けられる。
 
 ## リポジトリ構成
 

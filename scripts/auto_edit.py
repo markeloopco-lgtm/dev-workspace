@@ -1545,7 +1545,7 @@ def main() -> int:
     def common(p, telop_opts=True):
         p.add_argument("input", help="入力動画 (mp4/mkv/mov等)")
         p.add_argument("--config", default=str(DEFAULT_CONFIG))
-        p.add_argument("--preset", help="テロップ様式 (business / talk / news)")
+        p.add_argument("--preset", help="テロップ様式 (talk / business / news、または presets: に書き足した名前)")
         if telop_opts:
             p.add_argument("-o", "--output", help="出力先 (省略時: 入力_edited.mp4)")
             p.add_argument("--no-telop", action="store_true", help="テロップなし")
@@ -1573,7 +1573,7 @@ def main() -> int:
     p = sub.add_parser("preview", help="テロップの見た目を静止画1枚で確認する")
     p.add_argument("input", nargs="?", help="入力動画 (省略時は無地の背景で確認)")
     p.add_argument("--config", default=str(DEFAULT_CONFIG))
-    p.add_argument("--preset", help="テロップ様式 (business / talk / news)")
+    p.add_argument("--preset", help="テロップ様式 (talk / business / news、または presets: に書き足した名前)")
     p.add_argument("-o", "--output", default="telop_preview.png")
     p.add_argument("--text", help="サンプル文言 (改行は \\N)")
     p.add_argument("--title", help="左上の番組名バー")
@@ -1581,7 +1581,7 @@ def main() -> int:
 
     p = sub.add_parser("fonts", help="使えるテロップ用フォントを調べる")
     p.add_argument("--config", default=str(DEFAULT_CONFIG))
-    p.add_argument("--preset", help="テロップ様式 (business / talk / news)")
+    p.add_argument("--preset", help="テロップ様式 (talk / business / news、または presets: に書き足した名前)")
     p.set_defaults(func=cmd_fonts)
 
     args = parser.parse_args()
