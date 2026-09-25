@@ -2,10 +2,15 @@
 
 お手本にしたい動画を**全フレーム走査して数値と画像にまとめ**、
 「何秒ごとに素材を切り替えているか」「つなぎ方」「画面の配置」「色」「音量」などの
-**目標値**を作る手順。自分の動画も同じ物差しで測り、差を詰めていく。GPU不要。
+**目標値**を作る手順。自分の動画も同じ物差しで測り、差を詰めていく。GPU不要・OpenCV不要で軽い。
+
+> 台本から動画を作る（docs/07・08）ための目標スタイル `configs/style_profile.yaml` は、videolab の
+> `vlab analyze` → `aggregate`（[docs/06_video_analysis.md](06_video_analysis.md)）で作る。
+> 本書の `scripts/analyze_video.py` は、読みやすい簡易レポート・素材ごとの一覧（shots.csv）・
+> 1コマずつの書き出し・自分の動画との比較に使う。
 
 ```
-参考動画 ──fetch──▶ work/<動画ID>/source.mp4
+参考動画 ──fetch──▶ refs/<動画ID>/source.mp4
                       │
                       ├─analyze──▶ report.md（数値と図）・shots.csv（素材ごとの一覧）・代表フレーム
                       │              └─ 気になる瞬間は frames で1コマずつ確認
@@ -17,48 +22,39 @@
 
 - 真似るのは**作り方**（テンポ・つなぎ方・画面設計・色・音量）。映像・音声・台本・キャラ・ロゴなどの**中身は使わない**
 - 取得した動画・書き出したフレームは**分析用の手元保管のみ**。再配布・転載しない
-  （`work/` は .gitignore 済みでリポジトリに入らない）
+  （`refs/` は .gitignore 済みでリポジトリに入らず、videolab の制作では素材として使えない仕組み）
 - YouTubeの利用規約は、YouTubeが用意した機能以外でのダウンロードを原則認めていない。
   他人の動画の取得は分析目的の範囲で自己責任で。自分の動画なら YouTube Studio から正規にダウンロードできる
 
 ## 準備（Windows・初回のみ）
 
-PowerShellで:
+videolab と同じ環境を使う。[docs/06_video_analysis.md](06_video_analysis.md) の Step 1
+（ffmpeg の導入と `.venv-video` の作成・`requirements-video.txt` の導入）を済ませてから、リポジトリのフォルダで:
 
 ```powershell
-winget install --id Gyan.FFmpeg -e          # 動画処理ソフト ffmpeg
-winget install --id Python.Python.3.12 -e   # Pythonが未導入の場合のみ
-```
-
-**PowerShellを開き直してから**、リポジトリのフォルダで:
-
-```powershell
-ffmpeg -version                              # バージョンが出ればOK
-python -m venv .venv
-.venv\Scripts\pip install -r requirements.txt   # 取得用の yt-dlp と、その実行に要る Deno も入る
-.venv\Scripts\python tests\run_analyze_video_selftest.py # [OK] が出れば分析ツールは正常
+.venv-video\Scripts\python.exe tests\run_analyze_video_selftest.py   # [OK] が出れば分析ツールは正常
 ```
 
 ## Step 1: 参考動画を取得
 
 ```powershell
-.venv\Scripts\python scripts\analyze_video.py fetch "https://youtu.be/XXXXXXXXXXX"
+.venv-video\Scripts\python.exe scripts\analyze_video.py fetch "https://youtu.be/XXXXXXXXXXX"
 ```
 
-- 保存先: `work\<動画ID>\source.mp4`（＋動画情報 `source.info.json`・サムネイル `source.jpg`）
+- 保存先: `refs\<動画ID>\source.mp4`（＋動画情報 `source.info.json`・サムネイル `source.jpg`）
 - 長い配信アーカイブは一部だけ取得: `--section 00:10:00-00:20:00`
 - 失敗したら yt-dlp を更新（YouTube側の変更に合わせて頻繁に更新される）:
-  `.venv\Scripts\pip install -U "yt-dlp[default,deno]"`
+  `.venv-video\Scripts\python.exe -m pip install -U "yt-dlp[default,deno]"`
 - クラウド版のClaude Codeは、環境のネットワーク設定によってはYouTubeに接続できない。
   その場合はこのPC（ローカル）で実行する
 
 ## Step 2: 分析
 
 ```powershell
-.venv\Scripts\python scripts\analyze_video.py analyze work\XXXXXXXXXXX\source.mp4
+.venv-video\Scripts\python.exe scripts\analyze_video.py analyze refs\XXXXXXXXXXX\source.mp4
 ```
 
-- 出力先: `work\XXXXXXXXXXX\source_report\`
+- 出力先: `refs\XXXXXXXXXXX\source_report\`
 - 時間の目安: 1080p・60fpsの動画1分あたり約20秒（PCの性能で変わる）
 - 長い動画は区間を絞る `--start 10:00 --duration 5:00`、または間引く `--sample-fps 10`
 
@@ -78,16 +74,16 @@ python -m venv .venv
 report.md の7章に、切り替えの瞬間や大きな変化の区間ごとのコマンドが出るので、そのまま実行する:
 
 ```powershell
-.venv\Scripts\python scripts\analyze_video.py frames work\XXXXXXXXXXX\source.mp4 --start 83.2 --duration 1.5
+.venv-video\Scripts\python.exe scripts\analyze_video.py frames refs\XXXXXXXXXXX\source.mp4 --start 83.2 --duration 1.5
 ```
 
-- `work\XXXXXXXXXXX\frames\t83.20s\` に全フレームのPNGと一覧画像 `filmstrip_01.jpg`
+- `refs\XXXXXXXXXXX\frames\t83.20s\` に全フレームのPNGと一覧画像 `filmstrip_01.jpg`
 - 一覧の「Δ」は前のコマとの差、「=」は前と同じ絵。
   クロスフェードが何コマか、テロップが何コマで出るか、ズームなどの加工があるかを数えられる
 
 ## Step 4: 目標値（制作仕様）にまとめる
 
-Claude Code に頼む例:「work/XXXXXXXXXXX/source_report を読んで、同じクオリティで作るための制作仕様を作って」
+Claude Code に頼む例:「refs/XXXXXXXXXXX/source_report を読んで、同じクオリティで作るための制作仕様を作って」
 
 - 数値は report.md の10章「目標値」が土台
 - 数値で測れない所（字幕の書体・色・縁取り、素材の種類、加工、BGMの雰囲気）は、
@@ -98,7 +94,7 @@ Claude Code に頼む例:「work/XXXXXXXXXXX/source_report を読んで、同じ
 自分の動画（書き出した動画やOBS録画）も analyze してから:
 
 ```powershell
-.venv\Scripts\python scripts\analyze_video.py compare work\XXXXXXXXXXX\source_report 自分の動画_report
+.venv-video\Scripts\python.exe scripts\analyze_video.py compare refs\XXXXXXXXXXX\source_report 自分の動画_report
 ```
 
 差の表と、調整の目安（例: 「音量が参考より6 LU小さい → OBSの音声フィルタ『ゲイン』で約+6 dB」）が出る。

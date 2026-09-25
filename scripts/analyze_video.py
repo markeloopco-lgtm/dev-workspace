@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """参考動画をフレーム単位で分析し、同じクオリティで作るための数値と画像をまとめる。
 
-  fetch    参考動画を取得する (yt-dlp)。work/<動画ID>/source.mp4 などに保存
+  fetch    参考動画を取得する (yt-dlp)。refs/<動画ID>/source.mp4 などに保存
   analyze  全フレームを走査して カット・動き・画面レイアウト・色・音量 を計測し、
            report.md / report.json / 画像(タイムライン・代表フレーム一覧など)を書き出す
   frames   指定区間の全フレームを書き出す (テロップの出し方などを1コマずつ確認する用)
@@ -12,9 +12,9 @@ GPU不要。ffmpeg / ffprobe がPATHに必要 (docs/06 参照)。
 usage:
   python scripts/analyze_video.py fetch https://youtu.be/XXXXXXXXXXX
   python scripts/analyze_video.py fetch URL --section 00:10:00-00:20:00
-  python scripts/analyze_video.py analyze work/XXXXXXXXXXX/source.mp4
-  python scripts/analyze_video.py frames work/XXXXXXXXXXX/source.mp4 --start 83.2 --duration 1.5
-  python scripts/analyze_video.py compare work/REF/source_report work/MINE/rec_report
+  python scripts/analyze_video.py analyze refs/XXXXXXXXXXX/source.mp4
+  python scripts/analyze_video.py frames refs/XXXXXXXXXXX/source.mp4 --start 83.2 --duration 1.5
+  python scripts/analyze_video.py compare refs/REF/source_report MINE_report
 """
 
 import argparse
@@ -39,7 +39,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_WORK = REPO_ROOT / "work"
+DEFAULT_WORK = REPO_ROOT / "refs"   # 参考動画の置き場(videolabと共通。制作では使えない)
 REPORT_VERSION = 1
 
 ANALYSIS_LONG_SIDE = 320   # 分析用に縮小するときの長辺(px)。レイアウトと動きの把握には十分
@@ -1517,7 +1517,7 @@ def main() -> int:
 
     p = sub.add_parser("fetch", help="参考動画をダウンロード (yt-dlp)")
     p.add_argument("url")
-    p.add_argument("-o", "--output", help="保存先の親フォルダ（既定: work/）")
+    p.add_argument("-o", "--output", help="保存先の親フォルダ（既定: refs/）")
     p.add_argument("--section", help="一部だけ取得 例: 00:10:00-00:20:00（長い配信アーカイブ向け）")
     p.add_argument("--max-height", type=int, default=1080, help="解像度の上限（既定1080）")
     p.add_argument("--subs", action="store_true", help="日本語字幕（自動字幕含む）も取得")

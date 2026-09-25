@@ -5,6 +5,3 @@ six  # pytoshopが内部で使うが依存に宣言されていない
 numpy
 Pillow
 PyYAML
-
-# 参考動画の分析 (scripts/analyze_video.py — docs/06)。ffmpeg本体は別途インストール
-yt-dlp[default,deno]
