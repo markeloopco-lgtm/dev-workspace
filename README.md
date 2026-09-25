@@ -22,6 +22,10 @@ Cubism Editor でテンプレート適用       ← docs/03
 AITuberKitで自動運用配信               ← docs/04
    Geminiチャット応答 + Style-Bert-VITS2発話
    + Live2Dリップシンク + OBS→YouTube
+  │
+  ▼
+録画を自動編集                         ← docs/07 (このリポジトリ・無料)
+   ジェットカット + テロップ + BGM (テロップ様式はpresetで切替)
 ```
 
 お手本にしたい動画は `scripts/analyze_video.py` でフレーム単位に分析し、
@@ -38,6 +42,9 @@ python3 -m venv .venv
 
 # 動画分析の動作確認 (ffmpeg が必要・合成動画で検証)
 .venv/bin/python tests/run_video_selftest.py
+
+# 自動編集の動作確認 (ffmpegがあれば合成動画で統合検証まで)
+.venv/bin/python tests/run_autoedit_selftest.py
 ```
 
 See-through本体は別リポジトリ。セットアップは [docs/02](docs/02_see_through_setup.md) 参照。
@@ -59,12 +66,20 @@ export SEE_THROUGH_DIR=/path/to/see-through
 `inspect` で未分類レイヤーが出たら `configs/layer_mapping.yaml` にパターンを追記する。
 
 ```bash
-# 参考動画の分析: 取得 → 分析 → 気になる区間を1コマずつ → 自分の動画と比較
+# 参考動画の分析: 取得 → 分析 → 気になる区間を1コマずつ → 自分の動画と比較 (docs/06)
 .venv/bin/python scripts/analyze_video.py fetch "https://youtu.be/XXXXXXXXXXX"
 .venv/bin/python scripts/analyze_video.py analyze work/XXXXXXXXXXX/source.mp4
 .venv/bin/python scripts/analyze_video.py frames work/XXXXXXXXXXX/source.mp4 --start 83.2 --duration 1.5
 .venv/bin/python scripts/analyze_video.py compare work/XXXXXXXXXXX/source_report mine_report
+
+# 録画の自動編集 (無音カット+テロップ+BGM。要ffmpeg → docs/07)
+.venv/bin/pip install -r requirements-autoedit.txt
+.venv/bin/python scripts/auto_edit.py preview 録画.mp4          # テロップの見た目を1枚確認
+.venv/bin/python scripts/auto_edit.py run 録画.mp4 --bgm bgm.mp3
 ```
+
+テロップの様式は `--preset` で切り替える:
+`talk`(対談・話者を色分け・既定) / `business`(ビジネス系YouTube) / `news`(報道番組風)
 
 ## リポジトリ構成
 
@@ -76,16 +91,22 @@ export SEE_THROUGH_DIR=/path/to/see-through
 | `docs/04_aituber_runtime.md` | AITuber運用構成 (AITuberKit + Gemini + SBV2 + OBS) |
 | `docs/05_local_claude_code.md` | ローカルPCへの移行手順 (Claude Codeで続きを進める) |
 | `docs/06_reference_video_analysis.md` | 参考動画のフレーム分析と目標値の作り方 |
+| `docs/07_auto_edit.md` | 録画の自動編集 (ジェットカット+テロップ+BGM・様式プリセット) |
 | `CLAUDE.md` | ローカルClaude Code用の引き継ぎ書 (現状・残タスク・技術前提) |
 | `scripts/normalize_psd.py` | PSDレイヤー正規化 (inspect / normalize / PNG書き出し) |
 | `scripts/batch_decompose.py` | 分解→正規化の一括ドライバ |
 | `scripts/setup_aituber.sh` | AITuberKit導入・モデル組み込みヘルパー |
 | `scripts/analyze_video.py` | 参考動画のフレーム分析 (fetch / analyze / frames / compare) |
+| `scripts/auto_edit.py` | 自動編集 (run / preview / fonts / analyze / transcribe / render) |
+| `scripts/fetch_fonts.py` | テロップ用の無料フォント (Google Fonts) を取得 |
+| `configs/auto_edit.yaml` | 自動編集の設定 (カットしきい値・テロップ様式プリセット・BGM) |
+| `assets/fonts/` | テロップ用フォントの置き場 (置くだけで使われる。DL手順は同梱README) |
 | `configs/layer_mapping.yaml` | レイヤー名マッピング定義 (育てる設定ファイル) |
 | `configs/aituberkit.env.example` | AITuberKit環境変数テンプレ (本構成向け・検証済み) |
 | `notebooks/see_through_free_gpu.ipynb` | See-throughをKaggle/Colab無料GPU枠で回すノートブック |
-| `tests/run_selftest.py` | ラウンドトリップ検証 (GPU不要) |
+| `tests/run_selftest.py` | PSD正規化のラウンドトリップ検証 (GPU不要) |
 | `tests/run_video_selftest.py` | 動画分析の検証 (答えの分かっている合成動画で確認) |
+| `tests/run_autoedit_selftest.py` | 自動編集の検証 (ffmpegがあれば合成動画で統合検証) |
 
 ## 実装メモ
 

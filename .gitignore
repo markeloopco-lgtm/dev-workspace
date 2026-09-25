@@ -6,4 +6,9 @@ output/*
 !input/.gitkeep
 !output/.gitkeep
 *.psd
+# 参考動画・分析結果の置き場 (再配布しない。docs/06)
 work/
+
+# フォント本体は再配布しない (assets/fonts/README.md の手順で各自DL)
+assets/fonts/*
+!assets/fonts/README.md

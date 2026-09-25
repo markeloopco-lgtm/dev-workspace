@@ -26,19 +26,22 @@
 - [ ] Cubism Editor PROトライアルで1体目のマスターリグ作成（GUI作業。docs/03のチェックリストに沿ってユーザーを誘導）
 - [ ] Gemini APIキー・YouTube Data API v3キーの取得誘導 → .env設定
 - [ ] OBS設定（クロマキー）→ テスト配信
+- [ ] 自動編集を実機で試す: `winget install Gyan.FFmpeg` + `pip install -r requirements-autoedit.txt` → 録画で `scripts/auto_edit.py run`（docs/07）
 
 ## リポジトリ構成
 
 - `docs/01〜05`: 工程順のドキュメント（発注仕様→See-through→Cubism→AITuber運用→ローカル移行）
-- `docs/06`: 参考動画のフレーム分析（目標値の作り方・指標の読み方）
+- `docs/06`: 参考動画のフレーム分析（目標値の作り方・指標の読み方）／`docs/07`: 録画の自動編集（ジェットカット+テロップ+BGM）
 - `scripts/normalize_psd.py`: PSDレイヤー正規化（inspect / normalize）。GPU不要
 - `scripts/batch_decompose.py`: 一括処理（`--normalize-only` はローカルで使う）
 - `scripts/analyze_video.py`: 参考動画の分析（fetch / analyze / frames / compare）。GPU不要・ffmpeg必須。
   取得した動画と分析結果は `work/`（.gitignore済み。**コミットしない**）
 - `configs/layer_mapping.yaml`: See-through V3実タグ体系に較正済み（ソース調査で検証）
 - `configs/aituberkit.env.example`: AITuberKit用env（変数名は本家.env.exampleに対し検証済み）
-- `tests/run_selftest.py`: 正規化のラウンドトリップ検証 ／ `tests/run_video_selftest.py`: 動画分析の検証（合成動画）。
-  **Pythonコード変更時は両方必ず実行**
+- `scripts/auto_edit.py`: 録画の自動編集（ジェットカット+テロップ+BGM）。設定は `configs/auto_edit.yaml`。テロップ様式は preset で切替（talk=対談・既定 / business=ビジネス系YouTube / news=報道番組風）。各presetの数値は実在チャンネルの調査に較正済み（根拠と出典はdocs/07末尾）
+- `scripts/fetch_fonts.py`: テロップ用の無料フォント（Google Fonts）を `assets/fonts/` に取得
+- `tests/run_selftest.py`: 正規化のラウンドトリップ検証 ／ `tests/run_video_selftest.py`: 動画分析の検証（合成動画）／
+  `tests/run_autoedit_selftest.py`: 自動編集の検証（ffmpegがあれば合成動画で統合検証まで）。**Pythonコード変更時は3つとも必ず実行**
 
 ## 重要な技術的前提（再調査不要）
 
@@ -52,6 +55,15 @@
   `yt-dlp[default,deno]` で venv 内に入る（yt-dlp は venv の Scripts 内の deno を自動で見つける）
 - クロスフェード判定は「中間コマを前後の画の混合で再現した残差」で行う（パン・ズームと区別するため。docs/06）。
   判定基準を変えたら tests/run_video_selftest.py の合成動画（ディゾルブ・動く素材同士・パン・ズーム）で確認
+- 動画分析ツールはこの `scripts/analyze_video.py`（fetch/analyze/frames/compare）に一本化。
+  ブランチ `claude/youtube-editing-automation-t3wy9f` の同名スクリプト（テロップ帯の出現検出つき）は別実装なので混ぜない。
+  テロップの出入りの自動検出が必要になったら、現行版へ機能として移植する
+- 自動編集は ffmpeg(要別途インストール)+faster-whisper(MIT)。テロップ焼き込みはASS字幕をlibassで描画、エンコードはNVENC失敗時にlibx264へ自動フォールバック（実測検証済み）。文字起こしSRTはカット前タイムライン基準で、renderが写像する
+- テロップのフォントは `font: auto` で自動選択（`assets/fonts/`の同梱 → PCインストール済みの順に候補を探す）。同梱フォントはffmpegに `subtitles=...:fontsdir=` で渡すためインストール不要
+- 帯のグラデーションは矩形を「下端まで」重ねて不透明度を積み上げる。矩形を隣接させると継ぎ目に横縞が出る（実際に出たので対策済み・テストで固定）
+- presetは `configs/auto_edit.yaml` 末尾の `presets:` を deep_merge で上書きする方式。書いた項目だけ差し替わる
+- キーワード強調は「数字+単位の自動検出／keywords一覧／SRTに書く `*囲み*`」の3系統。数字と英単語は改行で割らない（`_protected_spans`）
+- talk presetの話者色分けはSRTの「名前: 発言」形式。`speakers:` に登録した名前のみ話者扱い（「結論:」等の誤爆防止）
 
 ## 作業方針
 
