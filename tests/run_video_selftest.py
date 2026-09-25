@@ -182,7 +182,11 @@ scenes:
         kind, amt = ps["camera"]["kind"], ps["camera"]["amount"]
         if ps["visual"]["type"] == "color":
             continue   # 無地は特徴点が無くカメラを測れない(unknown)のが正しい
-        if kind == "zoom_in":
+        if kind == "zoom_in" and ps["visual"]["type"] == "space":
+            # 宇宙シーンは星空に奥行き(パララックス)があり、画面全体の拡大率は惑星より小さく出る
+            check(got["zoom_total"] is not None and got["zoom_total"] > 1 + 0.3 * amt,
+                  f"計画shot{ps['index']} 宇宙 zoom_in {1 + amt:.3f} → 実測 {got['zoom_total']}")
+        elif kind == "zoom_in":
             check(near(got["zoom_total"], 1 + amt, 0.02 + 0.2 * amt),
                   f"計画shot{ps['index']} zoom_in {1 + amt:.3f} → 実測 {got['zoom_total']}")
         elif kind in ("pan_right", "pan_left"):
