@@ -1,0 +1,75 @@
+# スタイルプロファイル（目標スタイル）— 【仮の初期値・未計測】
+#
+# これは一般的な日本語の科学解説動画を想定した「当面の目安」で、VAIENCEの実測値ではない。
+# 参考動画を解析したら、次のコマンドでこのファイルを実測値に置き換えること:
+#   python scripts/vlab.py aggregate analysis/動画1 analysis/動画2 analysis/動画3 -o configs/style_profile.yaml
+# 数値だけ(映像・音声・台詞を含まない)なのでコミットしてよい。
+version: 1
+source:
+  videos: []
+  n: 0
+  note: 仮の初期値（未計測）
+format:
+  width: 1920
+  height: 1080
+  fps: 30.0
+  duration: 600.0
+editing:
+  shot_len_mean: 3.5
+  shot_len_median: 3.0
+  shot_len_p10: 1.5
+  shot_len_p90: 6.0
+  cuts_per_min: 17.0
+  cuts_per_min_first30s: 22.0
+  cuts_per_min_rest: 16.0
+  transition_mix:
+    cut: 0.85
+    dissolve: 0.1
+    fade_black: 0.05
+  dissolve_len_mean: 0.5
+  flash_per_min: 0.2
+camera:
+  move_mix:
+    zoom_in: 0.3
+    static: 0.25
+    pan_right: 0.12
+    pan_left: 0.12
+    zoom_out: 0.11
+    static_action: 0.1
+  moving_ratio: 0.65
+  zoom_speed_median: 0.025
+  pan_speed_median: 0.02
+  easing_mix:
+    linear: 0.6
+    ease_in_out: 0.4
+  motion_median: 0.002
+color:
+  luma_mean: 0.25
+  contrast_mean: 0.2
+  sat_mean: 0.35
+  colorfulness_mean: 40.0
+  dark_ratio: 0.5
+  palette: []
+telop:
+  shot_ratio: 0.8
+  frame_ratio: 0.8
+  y_median: 0.86
+  colors_observed: []
+audio:
+  lufs_integrated: -14.0
+  true_peak: -1.5
+  lra: 6.0
+  speech_ratio: 0.85
+  chars_per_sec: 7.5
+  gap_median: 0.35
+  bgm_rel_db: -18.0
+  onsets_per_min: null
+  loud_events_per_min: 1.0
+  speech_source: null
+dialogue:
+  n_voices: 2
+  turns_per_min: 6.0
+  main_voice_share: 0.65
+  turn_len_median: 6.0
+structure:
+  first_question_s: 5.0

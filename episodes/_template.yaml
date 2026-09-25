@@ -1,0 +1,25 @@
+# エピソード台本の雛形 (python scripts/vlab.py new-episode "タイトル" -o episodes/xxx.yaml で複製される)
+# 書式の説明は episodes/README.md。Claude Codeに prompts/episode_writer.md を渡すと下書きを書いてくれる。
+title: "{{TITLE}}"
+voices:
+  ナレーター: {engine: voicevox, speaker: 11, speed: auto}
+  教授: {engine: voicevox, speaker: 42, speed: auto}
+telop:
+  speaker_colors: {教授: "#b8f5c8"}
+bgm: []
+  # - {file: assets/bgm/好きなBGM.mp3}          # 音量は目標スタイルの bgm_rel_db に自動調整
+sources: []    # 台本の根拠(URL・書籍)。公開前に必ず確認する
+credits: []    # 概要欄に載せる素材クレジット(BGM・画像など)
+scenes:
+  - id: hook
+    title: "{{TITLE}}"
+    lines:
+      - {speaker: ナレーター, text: "ここに冒頭の問いかけを書く……？"}
+      - {speaker: 教授, text: "ここに答えのさわりを書く。"}
+    visuals:
+      - {type: space, template: planet, params: {preset: earth}, camera: zoom_in}
+  - id: body1
+    lines:
+      - {speaker: ナレーター, text: "本題1。"}
+    visuals:
+      - {type: space, template: starfield, params: {speed: 0.5}}
