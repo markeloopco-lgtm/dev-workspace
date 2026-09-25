@@ -1,0 +1,16 @@
+# 動画分析・制作パイプライン(videolab)用。docs/06・docs/07 参照。
+# PSD正規化用の requirements.txt とは別の仮想環境(.venv-video)に入れることを推奨。
+numpy>=1.26
+opencv-python>=4.10      # headless版は入れない(scenedetect/rapidocrと衝突するため)
+scipy>=1.11
+PyYAML>=6.0
+Pillow>=10.0
+soundfile>=0.12
+pyloudnorm>=0.1.1
+imageio-ffmpeg>=0.5      # ffmpegが未インストールでも最低限動かすための同梱バイナリ
+yt-dlp[default,deno]>=2026.8.19   # 参考動画の取得(YouTubeはJavaScriptランタイムdenoが必要)
+
+# --- 任意(必要になったら入れる) ---
+# faster-whisper>=1.2     # 字幕が無い動画の文字起こし(CPU可)
+# rapidocr onnxruntime    # テロップの文字認識(OCR)
+# scenedetect>=0.7.1      # カット検出の突き合わせ用
