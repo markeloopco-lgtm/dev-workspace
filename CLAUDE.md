@@ -21,15 +21,22 @@
 - [ ] Cubism Editor PROトライアルで1体目のマスターリグ作成（GUI作業。docs/03のチェックリストに沿ってユーザーを誘導）
 - [ ] Gemini APIキー・YouTube Data API v3キーの取得誘導 → .env設定
 - [ ] OBS設定（クロマキー）→ テスト配信
+- [ ] 参考動画 https://youtu.be/TbPqMCwK7IA （AIツール解説動画）の編集解析 → 同じ編集の再現（docs/06）。
+      解析ツールは完成・合成動画で検証済み。**クラウド環境ではYouTubeがネットワーク設定でブロック**されるため、
+      このPCで `scripts/analyze_video.py <URL>` を実行する。結果（report.md と sheets/ の画像）を一緒に見て、
+      再現方法（編集ソフトのテンプレート／自動編集スクリプト）をユーザーに選んでもらう
 
 ## リポジトリ構成
 
-- `docs/01〜05`: 工程順のドキュメント（発注仕様→See-through→Cubism→AITuber運用→ローカル移行）
+- `docs/01〜06`: 工程順のドキュメント（発注仕様→See-through→Cubism→AITuber運用→ローカル移行→参考動画の編集解析）
 - `scripts/normalize_psd.py`: PSDレイヤー正規化（inspect / normalize）。GPU不要
 - `scripts/batch_decompose.py`: 一括処理（`--normalize-only` はローカルで使う）
 - `configs/layer_mapping.yaml`: See-through V3実タグ体系に較正済み（ソース調査で検証）
 - `configs/aituberkit.env.example`: AITuberKit用env（変数名は本家.env.exampleに対し検証済み）
 - `tests/run_selftest.py`: 正規化のラウンドトリップ検証。**Pythonコード変更時は必ず実行**
+- `scripts/analyze_video.py`（+ `video_io/overlay/audio/report.py`）: 参考動画の編集をフレーム単位で解析し
+  `output/video_analysis/<ID>/` に report.md・recipe.json・画像を出す。依存は `requirements-video.txt`
+- `tests/run_video_selftest.py`: 正解つき合成動画での動画解析の検証。**動画解析のコード変更時は必ず実行**
 
 ## 重要な技術的前提（再調査不要）
 
@@ -38,6 +45,9 @@
 - AITuberKitランタイムはCubism 3/4系。**Cubism 5新機能は使わない**でリグを作る
 - pytoshop書き出しPSDはunicode名に終端NULが付く既知問題 → normalize_psd.pyが除去済み
 - ライセンス: AITuberKit非商用無料・**Live2D機能は現在商用不可**／SBV2はAGPL／声モデルはクレジット表記（docs/04の表参照）
+- 参考動画の解析結果（画像含む）は研究用。公開・再配布・素材流用はしない（再現するのは編集の仕方だけ）。`output/` はgit管理外
+- 動画解析の実装メモ: `cv2.imwrite/imread` はWindowsの日本語パスで失敗するので `video_io.imwrite_jpg/imread` を使う。
+  OpenCV 5の `putText` は線の太さ指定が効かない（合成テストの縁取り文字は膨張で作っている）
 
 ## 作業方針
 
