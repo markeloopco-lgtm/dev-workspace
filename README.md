@@ -24,7 +24,29 @@ AITuberKitで自動運用配信               ← docs/04
    + Live2Dリップシンク + OBS→YouTube
 ```
 
-## セットアップ
+## 解説動画の作風分析・制作（videolab）
+
+参考動画（VAIENCE等の科学解説CG動画）を**フレーム単位で計測**して作風を数値化し、
+同じテンポ・品質の**オリジナル動画**を台本YAMLから自動で組み立てて、同じ物差しで採点する。
+
+```
+参考動画 ──watch(URLのままGemini)／fetch→analyze(全フレーム計測)──▶ report.html・profile.json
+   3〜5本を aggregate ──▶ configs/style_profile.yaml（目標スタイル・数値のみ）
+台本 episodes/*.yaml ──produce──▶ VOICEVOX合成 → カット割り → 宇宙3DCG/画像 → テロップ → ミックス
+   ──▶ renders/*.mp4 ──--check──▶ gap_report.md（一致度スコアと直し方）
+```
+
+```powershell
+py -3.12 -m venv .venv-video
+.venv-video\Scripts\python.exe -m pip install -r requirements-video.txt
+.venv-video\Scripts\python.exe scripts\vlab.py doctor
+.venv-video\Scripts\python.exe scripts\vlab.py produce episodes\sample_moon_half.yaml --tts dummy --draft
+```
+
+手順は [docs/06（分析）](docs/06_video_analysis.md) と [docs/07（制作）](docs/07_video_production.md)。
+検証: `python tests/run_video_selftest.py`（正解つき合成動画で解析精度と制作ラウンドトリップを確認）。
+
+## セットアップ（Live2D側）
 
 ```bash
 python3 -m venv .venv
@@ -69,6 +91,14 @@ export SEE_THROUGH_DIR=/path/to/see-through
 | `configs/aituberkit.env.example` | AITuberKit環境変数テンプレ (本構成向け・検証済み) |
 | `notebooks/see_through_free_gpu.ipynb` | See-throughをKaggle/Colab無料GPU枠で回すノートブック |
 | `tests/run_selftest.py` | ラウンドトリップ検証 (GPU不要) |
+| `docs/06_video_analysis.md` | 参考動画のフレーム単位分析 → 目標スタイル |
+| `docs/07_video_production.md` | 台本から動画を制作・採点 |
+| `scripts/vlab.py` | videolabのコマンド一式 |
+| `videolab/` | 分析・制作の本体 |
+| `configs/style_profile.yaml` | 目標スタイル（数値のみ） |
+| `episodes/` | 台本YAML（書式: `episodes/README.md`） |
+| `prompts/` | Claude Code向けの台本作成・構成分析の指示書 |
+| `tests/run_video_selftest.py` | 解析精度・制作ラウンドトリップ検証 |
 
 ## 実装メモ
 
