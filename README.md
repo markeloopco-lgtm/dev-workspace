@@ -44,6 +44,8 @@ py -3.12 -m venv .venv-video
 ```
 
 手順は [docs/06（分析）](docs/06_video_analysis.md) と [docs/07（制作）](docs/07_video_production.md)。
+フリー動画素材（Pexels / Pixabay）を台本の検索語で取ってきて組み立てる方法は [docs/08](docs/08_stock_footage.md)
+（`vlab stock 台本.yaml`。見本 `episodes/sample_stock.yaml`）。
 検証: `python tests/run_video_selftest.py`（正解つき合成動画で解析精度と制作ラウンドトリップを確認）。
 
 参考動画の**簡易レポート**（編集テンポ・つなぎ方・素材ごとの一覧 shots.csv・画面配置・色・音量・自分の動画との比較）は `scripts/analyze_video.py` でも作れる（[docs/06_reference_video_analysis.md](docs/06_reference_video_analysis.md)。OpenCV不要で軽い）。
@@ -79,12 +81,12 @@ export SEE_THROUGH_DIR=/path/to/see-through
 
 `inspect` で未分類レイヤーが出たら `configs/layer_mapping.yaml` にパターンを追記する。
 
-```bash
-# 参考動画の分析: 取得 → 分析 → 気になる区間を1コマずつ → 自分の動画と比較
-.venv/bin/python scripts/analyze_video.py fetch "https://youtu.be/XXXXXXXXXXX"
-.venv/bin/python scripts/analyze_video.py analyze work/XXXXXXXXXXX/source.mp4
-.venv/bin/python scripts/analyze_video.py frames work/XXXXXXXXXXX/source.mp4 --start 83.2 --duration 1.5
-.venv/bin/python scripts/analyze_video.py compare work/XXXXXXXXXXX/source_report mine_report
+```powershell
+# 参考動画の簡易レポート(analyze_video.py): 取得 → 分析 → 気になる区間を1コマずつ → 自分の動画と比較
+.venv-video\Scripts\python.exe scripts\analyze_video.py fetch "https://youtu.be/XXXXXXXXXXX"
+.venv-video\Scripts\python.exe scripts\analyze_video.py analyze refs\XXXXXXXXXXX\source.mp4
+.venv-video\Scripts\python.exe scripts\analyze_video.py frames refs\XXXXXXXXXXX\source.mp4 --start 83.2 --duration 1.5
+.venv-video\Scripts\python.exe scripts\analyze_video.py compare refs\XXXXXXXXXXX\source_report mine_report
 ```
 
 ## リポジトリ構成
@@ -115,6 +117,9 @@ export SEE_THROUGH_DIR=/path/to/see-through
 | `episodes/` | 台本YAML（書式: `episodes/README.md`） |
 | `prompts/` | Claude Code向けの台本作成・構成分析の指示書 |
 | `tests/run_video_selftest.py` | 解析精度・制作ラウンドトリップ検証 |
+| `docs/08_stock_footage.md` | フリー動画素材（Pexels / Pixabay）で作る手順 |
+| `videolab/stock.py` | フリー素材の検索・取得・クレジット記録（`vlab stock`） |
+| `tests/run_stock_selftest.py` | フリー素材取得の検証（ネット・APIキー不要） |
 
 ## 実装メモ
 

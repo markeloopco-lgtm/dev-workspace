@@ -3,7 +3,8 @@
 1. 一枚絵（外部生成）からLive2Dモデルを半自動量産し、AITuberKitで
    チャット自動応答つきYouTube配信（ほぼ放置運用）を行う
 2. **videolab**: 参考動画（VAIENCE等の科学解説CG動画）をフレーム単位で計測して作風を数値化し、
-   同じテンポ・品質のオリジナル動画を台本YAMLから自動で組み立てて採点する（docs/06・07）
+   同じテンポ・品質のオリジナル動画を台本YAMLから自動で組み立てて採点する（docs/06・07）。
+   フリー動画素材（Pexels / Pixabay）を検索語で取ってきて組み立てることもできる（docs/08）
 
 ## ユーザーについて
 
@@ -16,11 +17,14 @@
 
 ソフトウェア部分は完成・検証済み。残タスクは実機作業のみ:
 
-- [ ] 参考動画 https://youtu.be/lZFXcN2tA4s をこのPCで分析（docs/06_reference_video_analysis.md）: `fetch` → `analyze` → report.md と代表フレームを読んで制作仕様を作る。
-      クラウド環境ではYouTubeへの接続がネットワーク設定で遮断され未実施。
-      ユーザーによると、この動画は**フリー動画素材を組み合わせて作られている**
-      → 素材の長さ・つなぎ方（shots.csv）・色の統一感・字幕/ナレーション/BGMを重点に見る。
-      制作パイプライン（素材集め→組み立て→字幕→ナレーション→音量調整）は、分析結果をユーザーと確認してから作る
+- [ ] 参考動画 https://youtu.be/lZFXcN2tA4s をこのPCで分析。クラウド環境ではYouTubeへの接続がネットワーク設定で遮断され未実施。
+      ユーザーによると、この動画は**フリー動画素材を組み合わせて作られている**。
+      1) `vlab watch <URL>`（URLのままGemini）で構成を把握 → 2)（規約を理解した上で）`vlab fetch` → `vlab analyze` →
+      `aggregate` で `configs/style_profile.yaml` を実測値に（docs/06_video_analysis.md）→
+      3) 簡易レポート `scripts/analyze_video.py analyze`（shots.csv・色の統一感・BGM推定。docs/06_reference_video_analysis.md）も見て、
+      台本のテーマ・話し方、テロップ・BGMの見た目をユーザーと確認して決める
+- [ ] Pexels / Pixabay の無料APIキー → `.env` → `vlab stock episodes/sample_stock.yaml` → `vlab produce ... --draft` で
+      フリー素材の取得〜制作を実機確認（docs/08。実APIでは未検証。応答見本での検証のみ）
 - [ ] Kaggle登録 → `notebooks/see_through_free_gpu.ipynb` で一枚絵をレイヤー分解（ユーザーの一枚絵が必要）
 - [ ] 分解PSDを `scripts/normalize_psd.py inspect` で検品 → 未分類があれば `configs/layer_mapping.yaml` に追記
 - [ ] Style-Bert-VITS2をこのPCにセットアップ（docs/04 Step3。VRAM 4GBなので合成はCPUフォールバック許容）
@@ -47,8 +51,8 @@
 - `docs/06_reference_video_analysis.md`: analyze_video.py の使い方（目標値の作り方・指標の読み方）
 - `scripts/normalize_psd.py`: PSDレイヤー正規化（inspect / normalize）。GPU不要
 - `scripts/batch_decompose.py`: 一括処理（`--normalize-only` はローカルで使う）
-- `scripts/analyze_video.py`: 参考動画の分析（fetch / analyze / frames / compare）。GPU不要・ffmpeg必須。
-  取得した動画と分析結果は `work/`（.gitignore済み。**コミットしない**）
+- `scripts/analyze_video.py`: 参考動画の簡易レポート（fetch / analyze / frames / compare）。GPU・OpenCV不要。
+  取得した動画と分析結果は `refs/`（.gitignore済み・制作では使えない。**コミットしない**）
 - `configs/layer_mapping.yaml`: See-through V3実タグ体系に較正済み（ソース調査で検証）
 - `configs/aituberkit.env.example`: AITuberKit用env（変数名は本家.env.exampleに対し検証済み）
 - `tests/run_selftest.py`: 正規化のラウンドトリップ検証 ／ `tests/run_analyze_video_selftest.py`: analyze_video.py の検証（合成動画）。
@@ -56,7 +60,10 @@
 - `docs/06_video_analysis.md`〜`07_video_production.md`: videolab（参考動画のフレーム分析 → 目標スタイル → 台本から制作・採点）。
   `docs/06_reference_video_analysis.md` は analyze_video.py（簡易レポート・shots.csv・compare）の説明で別物
 - `scripts/vlab.py`: videolabのコマンド（doctor / watch / fetch / analyze / frames / aggregate /
-  compare / annotate / purge / voices / new-episode / produce）
+  compare / annotate / purge / voices / new-episode / produce / stock）
+- `videolab/stock.py` + `docs/08_stock_footage.md`: フリー動画素材（Pexels / Pixabay）の検索・取得・クレジット記録。
+  台本に `{type: stock, query: 検索語}` と書き `vlab stock 台本` で取得 → 制作時に `type: video` へ差し替え。
+  見本 `episodes/sample_stock.yaml`、検証 `tests/run_stock_selftest.py`（ネット不要。stock/episode を触ったら実行）
 - `videolab/`: 本体。`analyze.py`(フレーム計測・カット/ディゾルブ/暗転検出・カメラワーク推定)、
   `audio.py`(ラウドネス・話速・間・BGM差・掛け合い推定)、`profile.py`(プロファイル・集約・採点)、
   `report.py`(HTMLレポート)、`produce/`(TTS・タイムライン・宇宙シーン・合成・ミックス)
@@ -77,6 +84,12 @@
   `yt-dlp[default,deno]` で venv 内に入る（yt-dlp は venv の Scripts 内の deno を自動で見つける）
 - クロスフェード判定は「中間コマを前後の画の混合で再現した残差」で行う（パン・ズームと区別するため。docs/06_reference_video_analysis.md）。
   判定基準を変えたら tests/run_analyze_video_selftest.py の合成動画（ディゾルブ・動く素材同士・パン・ズーム）で確認
+- フリー素材API: Pexels は `Authorization` ヘッダーにキー・`locale=ja-JP`・`size=medium`(フルHD以上)、
+  Pixabay は `key` パラメータ・`lang=ja`。キーは `.env` の `PEXELS_API_KEY` / `PIXABAY_API_KEY`（videolab.vlm.load_env で読む）。
+  取得記録は `assets/video/stock/index.json`。ファイルを消した素材は不採用として記録し二度と取らない
+- Linux（クラウド）でvideolabのテストを回す時は日本語フォントが要る（Windowsのフォント前提のため）。
+  制作側（telop.find_font）は `WINDIR` の Fonts\meiryob.ttc 等、合成動画（tests/video_fixtures.py）は
+  /usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc 等を探すので、そこに日本語フォントを置く（リンク可）と通る
 
 ### videolab の前提（再調査不要・2026-09調査）
 
