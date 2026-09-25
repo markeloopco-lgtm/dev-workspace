@@ -24,6 +24,9 @@ AITuberKitで自動運用配信               ← docs/04
    + Live2Dリップシンク + OBS→YouTube
 ```
 
+お手本にしたい動画は `scripts/analyze_video.py` でフレーム単位に分析し、
+編集テンポ・つなぎ方・画面配置・色・音量の目標値を作れる（[docs/06](docs/06_reference_video_analysis.md)）。
+
 ## セットアップ
 
 ```bash
@@ -32,6 +35,9 @@ python3 -m venv .venv
 
 # 動作確認 (GPU不要・合成PSDでラウンドトリップ検証)
 .venv/bin/python tests/run_selftest.py
+
+# 動画分析の動作確認 (ffmpeg が必要・合成動画で検証)
+.venv/bin/python tests/run_video_selftest.py
 ```
 
 See-through本体は別リポジトリ。セットアップは [docs/02](docs/02_see_through_setup.md) 参照。
@@ -52,6 +58,14 @@ export SEE_THROUGH_DIR=/path/to/see-through
 
 `inspect` で未分類レイヤーが出たら `configs/layer_mapping.yaml` にパターンを追記する。
 
+```bash
+# 参考動画の分析: 取得 → 分析 → 気になる区間を1コマずつ → 自分の動画と比較
+.venv/bin/python scripts/analyze_video.py fetch "https://youtu.be/XXXXXXXXXXX"
+.venv/bin/python scripts/analyze_video.py analyze work/XXXXXXXXXXX/source.mp4
+.venv/bin/python scripts/analyze_video.py frames work/XXXXXXXXXXX/source.mp4 --start 83.2 --duration 1.5
+.venv/bin/python scripts/analyze_video.py compare work/XXXXXXXXXXX/source_report mine_report
+```
+
 ## リポジトリ構成
 
 | パス | 内容 |
@@ -61,14 +75,17 @@ export SEE_THROUGH_DIR=/path/to/see-through
 | `docs/03_cubism_template_workflow.md` | Cubismテンプレート量産手順・チェックリスト |
 | `docs/04_aituber_runtime.md` | AITuber運用構成 (AITuberKit + Gemini + SBV2 + OBS) |
 | `docs/05_local_claude_code.md` | ローカルPCへの移行手順 (Claude Codeで続きを進める) |
+| `docs/06_reference_video_analysis.md` | 参考動画のフレーム分析と目標値の作り方 |
 | `CLAUDE.md` | ローカルClaude Code用の引き継ぎ書 (現状・残タスク・技術前提) |
 | `scripts/normalize_psd.py` | PSDレイヤー正規化 (inspect / normalize / PNG書き出し) |
 | `scripts/batch_decompose.py` | 分解→正規化の一括ドライバ |
 | `scripts/setup_aituber.sh` | AITuberKit導入・モデル組み込みヘルパー |
+| `scripts/analyze_video.py` | 参考動画のフレーム分析 (fetch / analyze / frames / compare) |
 | `configs/layer_mapping.yaml` | レイヤー名マッピング定義 (育てる設定ファイル) |
 | `configs/aituberkit.env.example` | AITuberKit環境変数テンプレ (本構成向け・検証済み) |
 | `notebooks/see_through_free_gpu.ipynb` | See-throughをKaggle/Colab無料GPU枠で回すノートブック |
 | `tests/run_selftest.py` | ラウンドトリップ検証 (GPU不要) |
+| `tests/run_video_selftest.py` | 動画分析の検証 (答えの分かっている合成動画で確認) |
 
 ## 実装メモ
 
