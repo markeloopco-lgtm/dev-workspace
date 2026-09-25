@@ -46,8 +46,13 @@ python --version
 
 ### Step 2: 解析ツールの準備（初回のみ）
 
+docs/05でクローンしたフォルダで、このツールが入ったブランチに切り替えてから準備する
+（まだクローンしていなければ docs/05 のStep 3で `-b claude/video-frame-analysis-edit-wa8q7l` を指定）:
+
 ```powershell
 cd $HOME\Documents\dev-workspace
+git fetch origin
+git checkout claude/video-frame-analysis-edit-wa8q7l
 python -m venv .venv
 .venv\Scripts\pip install -r requirements-video.txt
 ```
