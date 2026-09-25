@@ -44,6 +44,9 @@ episodes/xxx.yaml に書いてください。
 - 図解・人物・地上の場面など用意が必要な画は `type: image` で `assets/images/<分かりやすい名前>.png`
   を指定し、行末に `# 素材TODO: <何の画か・入手/生成方法の案>` とコメントを書く
 - 図解だけの場面は `type: color` の下地＋`telop:` で要点を出すのも可
+- 実写の風景・物・自然現象の場面は、フリー動画素材を `{type: stock, query: "検索語"}` で書ける
+  （`vlab stock` が Pexels / Pixabay から取ってくる。docs/08）。検索語は英語で「何が・どこで・どう動く」まで
+  具体的に（例 `"waves crashing on rocks at sunset"`）。人物の顔・ロゴ・商標が主役になる検索語は避ける
 
 ### 4. 守ること（重要）
 

@@ -8,7 +8,7 @@ assets/
   bgm/      BGM（mp3/wav）
   se/       効果音
   images/   静止画（自作・生成・フリー素材）
-  video/    動画素材
+  video/    動画素材（video/stock/ は vlab stock が取得したフリー素材と撮影者・出典の記録 index.json）
   textures/ 惑星テクスチャ（正距円筒図法 2:1 の画像）
   fonts/    テロップ用フォント（ここに置いたものが最優先で使われる）
 ```
@@ -24,6 +24,7 @@ assets/
 | 宇宙画像・3D | NASA | 原則パブリックドメイン。出典表記を推奨、NASAのロゴ・推奨を装う使い方は不可 |
 | HDRI・テクスチャ | Poly Haven | CC0（クレジット不要） |
 | フォント | Google Fonts（Noto Sans JP、M PLUS 1 など） | SIL OFL（商用OK） |
+| 動画素材 | Pexels / Pixabay | 商用OK・クレジット任意。素材そのままの再配布・販売は不可、人物・ロゴの写った素材の使い方に注意。`vlab stock` で検索・取得（docs/08） |
 
 - 画像生成AIで素材を作る場合は、そのモデルの商用利用条件を確認する
   （例: FLUX.1 schnell は Apache 2.0 で商用可、FLUX.1 dev は非商用）

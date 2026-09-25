@@ -74,6 +74,7 @@ scenes:
 | `space` | `{type: space, template: planet, params: {...}}` | 宇宙シーンをプログラムで描画（素材不要）。Blenderがあれば3DCG、無ければ2D版 |
 | `image` | `{type: image, path: assets/images/x.png}` | 静止画にゆっくりズーム/パン（ケン・バーンズ） |
 | `video` | `{type: video, path: assets/video/x.mp4, start: 2.0}` | 動画素材（短ければループ） |
+| `stock` | `{type: stock, query: "ocean waves", min_duration: 6}` | フリー動画素材を検索語で指定。`vlab stock 台本` で Pexels/Pixabay から取得し、制作時に `video` に差し替わる（docs/08。見本 `sample_stock.yaml`） |
 | `color` | `{type: color, color: "#0b1d3a", color2: "#1e5aa8"}` | 単色/グラデーションの下地（図解・文字だけの場面） |
 
 ### overlays（背景の上に重ねる画像）

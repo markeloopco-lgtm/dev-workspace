@@ -4,7 +4,7 @@ from pathlib import Path
 
 import yaml
 
-VISUAL_TYPES = ("space", "image", "video", "color")
+VISUAL_TYPES = ("space", "image", "video", "color", "stock")   # stock = フリー素材の検索語(videolab/stock.py)
 FORBIDDEN_DIRS = ("refs", "analysis")   # 参考動画とその解析物は制作素材に使わない
 _REPO = Path(__file__).resolve().parents[2]
 
@@ -137,6 +137,38 @@ def _placeholder(v: dict, missing: str) -> dict:
             "_todo": f"素材TODO: {Path(missing).name}"}
 
 
+def _stock_to_video(v: dict, where: str, ep: dict, allow_missing: bool) -> dict:
+    """{type: stock, query: 検索語} を取得済みのフリー素材 {type: video, path: ...} に差し替える。
+
+    同じ検索語を何度も使うと、取得済みの素材を順番に割り当てる(vlab stock が使用回数ぶん取ってくる)。
+    撮影者と出典は credits に足す(credits.txt → 概要欄)。
+    """
+    from videolab import stock
+    q = str(v.get("query") or "").strip()
+    if not q:
+        raise EpisodeError(f"{where}: type=stock には query(検索語)が必要です")
+    uses = ep.setdefault("_stock_uses", {})
+    nth = uses.get(stock.qkey(q), 0)
+    uses[stock.qkey(q)] = nth + 1
+    hit = stock.resolve(q, nth)
+    if hit is None:
+        if not allow_missing:
+            raise EpisodeError(f"{where}: フリー素材がまだありません(検索語: {q})\n"
+                               f"  python scripts/vlab.py stock {ep['_path']} で取得してください"
+                               "(--draft なら仮カードで代用できます)")
+        ep["_missing"].append(f"stock: {q}")
+        return _placeholder(v, q)
+    out = {k: val for k, val in v.items() if k not in ("query", "provider", "min_duration")}
+    out.update(type="video", path=hit["path"])
+    out.setdefault("start", 0.0)
+    credits = ep.get("credits") or []
+    line = stock.credit_line(hit)
+    if line not in credits:
+        credits.append(line)
+    ep["credits"] = credits
+    return out
+
+
 def _norm_visual(v, base: Path, where: str, ep: dict, allow_missing: bool) -> dict:
     if isinstance(v, str):
         v = {"type": "image", "path": v} if Path(v).suffix else {"type": "space", "template": v}
@@ -145,6 +177,11 @@ def _norm_visual(v, base: Path, where: str, ep: dict, allow_missing: bool) -> di
     if t not in VISUAL_TYPES:
         raise EpisodeError(f"{where}: 未知の type '{t}' (使えるもの: {', '.join(VISUAL_TYPES)})")
     v["type"] = t
+    if t == "stock":
+        v = _stock_to_video(v, where, ep, allow_missing)
+        if v.get("_todo"):
+            return v
+        t = "video"
     if t in ("image", "video"):
         if not v.get("path"):
             raise EpisodeError(f"{where}: type={t} には path が必要です")

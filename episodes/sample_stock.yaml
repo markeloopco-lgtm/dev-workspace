@@ -1,0 +1,36 @@
+# フリー動画素材で作る台本の見本（docs/08）
+#   1) python scripts/vlab.py stock episodes/sample_stock.yaml        # 素材を取得(Pexels/PixabayのAPIキーが必要)
+#   2) python scripts/vlab.py produce episodes/sample_stock.yaml --draft
+# 取得前でも --draft なら「素材TODO」の仮カードで流れを確認できる。
+title: "朝の海辺をゆっくり歩く"
+voices:
+  ナレーター: {engine: voicevox, speaker: 11, speed: auto}
+bgm:
+  # - {file: assets/bgm/好きなBGM.mp3}          # 行頭の # を消すと有効。音量は目標スタイルに自動調整
+sources: []
+credits: []    # 動画素材のクレジットは vlab stock の記録から自動で足される
+scenes:
+  - id: hook
+    title: "朝の海辺をゆっくり歩く"
+    lines:
+      - {speaker: ナレーター, text: "朝の海は、一日でいちばん静かな時間です。"}
+      - {speaker: ナレーター, text: "今日は、目が覚めたばかりの海辺を歩いてみましょう。"}
+    visuals:
+      - {type: stock, query: "sunrise over calm sea", min_duration: 6}
+      - {type: stock, query: "gentle waves on sandy beach"}
+  - id: walk
+    lines:
+      - {speaker: ナレーター, text: "波は寄せては返し、砂の上に細い線を残していきます。"}
+      - {speaker: ナレーター, text: "遠くでは、鳥たちがゆっくりと空を渡っていきます。"}
+      - {speaker: ナレーター, text: "足元の砂は、まだ夜の冷たさを少しだけ残しています。"}
+    visuals:
+      - {type: stock, query: "gentle waves on sandy beach"}
+      - {type: stock, query: "seabirds flying over the ocean"}
+      - {type: stock, query: "footprints in wet sand", camera: static}
+  - id: outro
+    lines:
+      - {speaker: ナレーター, text: "少しずつ日が高くなり、海の色も明るく変わってきました。"}
+      - {speaker: ナレーター, text: "今日も、いい一日になりそうです。"}
+    visuals:
+      - {type: stock, query: "sunlight sparkling on sea surface"}
+    pause_after: 1.5

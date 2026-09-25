@@ -10,6 +10,7 @@
   python scripts/vlab.py purge analysis/XXXX --video refs/XXXX.mp4    # 分析後に複製物を削除
   python scripts/vlab.py aggregate analysis/A analysis/B analysis/C -o configs/style_profile.yaml
   python scripts/vlab.py produce episodes/sample_moon_half.yaml --check
+  python scripts/vlab.py stock episodes/xxx.yaml         # 台本の {type: stock} 素材を取得(docs/08)
 """
 
 import argparse
@@ -162,6 +163,20 @@ def cmd_produce(a):
         print(f"差分レポート: {out_dir / 'gap_report.md'}")
 
 
+def cmd_stock(a):
+    from videolab import stock
+    if a.search:
+        cands = stock.rank(stock.search(a.target, a.provider, n=a.n), a.min_duration)
+        for c in cands:
+            print(f"{c.provider:8} #{c.id:<10} {c.width}x{c.height} {c.duration:5.1f}秒  {c.author}  {c.page_url}")
+        print(f"{len(cands)}件(横長・{a.min_duration:g}秒以上・720p以上を上に表示)")
+        return 0
+    got = stock.fetch_for_episode(a.target, a.provider, a.min_duration)
+    if got:
+        print(f"素材をそろえました({stock.STOCK_DIR}): " + " / ".join(f"{q} {n}本" for q, n in got.items()))
+        print(f"次: python scripts/vlab.py produce {a.target} --draft")
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="vlab", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -264,6 +279,15 @@ def main(argv=None):
     s.add_argument("--draft", action="store_true", help="半分の解像度で速く試す")
     s.add_argument("--check", action="store_true", help="完成後に解析して目標スタイルと比較")
     s.set_defaults(func=cmd_produce)
+
+    s = sub.add_parser("stock", help="フリー動画素材(Pexels/Pixabay)を台本の検索語で取得")
+    s.add_argument("target", help="台本YAML(--search のときは検索語)")
+    s.add_argument("--search", action="store_true", help="取得せず、検索語の候補を一覧表示する")
+    s.add_argument("--provider", default="auto", choices=["auto", "pexels", "pixabay"],
+                   help="auto=.env にキーのあるサイトを全部使う")
+    s.add_argument("--min-duration", type=float, default=5.0, help="この秒数以上の素材を優先(既定5)")
+    s.add_argument("-n", type=int, default=10, help="--search で表示する件数")
+    s.set_defaults(func=cmd_stock)
 
     a = ap.parse_args(argv)
     try:
