@@ -173,6 +173,10 @@ docs/06 の目視チェックリストの項目を1つずつ埋めて、
 - **自分のPC**: そのまま動く。「Sign in to confirm you're not a bot」で止まった時だけ
   `--cookies-from-browser edge`（または chrome / firefox）を付ける。自分のブラウザの
   ログイン情報を使うため、**自分のPCでだけ**使うこと（クラウドには入れない）
+- **Mac**: Step 0 の「Mac/Linux」のコマンドで動く。`python3` が無ければ初回に
+  「コマンドライン・デベロッパツール」のインストールを求められるので従う。Node.jsは
+  nodejs.org のLTS版インストーラ（無料）で入れる。ボット確認時は `--cookies-from-browser chrome`
+  （Safariはフルディスクアクセスの許可が要るのでChromeかFirefoxが楽）
 
 ## 権利・マナー（重要）
 
