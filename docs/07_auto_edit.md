@@ -405,7 +405,8 @@ python scripts/auto_edit.py render 録画.mp4
 python tests/run_autoedit_selftest.py
 ```
 
-ffmpegがあれば合成動画で「無音検出→カット→テロップ焼き込み→BGM」まで通しで検証する
+ffmpegがあれば合成動画で「無音検出→カット→テロップ焼き込み→BGM」まで通しで検証し、
+`preview` の画像にテロップの文字が実際に写ることも確かめる
 (ffmpegが無い環境ではロジックのみ検証してスキップ表示)。
 
 ## ライセンスと権利

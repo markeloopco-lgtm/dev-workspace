@@ -1410,7 +1410,11 @@ def cmd_preview(args) -> int:
             if src.suffix.lower() in (".ttf", ".otf", ".ttc", ".otc"):
                 shutil.copy2(src, local / src.name)
         opts += ":fontsdir=fonts"
-    subprocess.run([ffmpeg, "-y", "-v", "error", "-i", frame.name, "-vf", opts,
+    # 静止画は0秒のコマとして描かれ、0秒はフェードインの始点(完全に透明)なので
+    # テロップが写らない。表示中の時刻(最初のテロップの中間)にずらして撮る
+    shot = (events[0].start + events[0].end) / 2
+    subprocess.run([ffmpeg, "-y", "-v", "error", "-i", frame.name,
+                    "-vf", f"setpts=PTS+{shot:.3f}/TB,{opts}",
                     "-frames:v", "1", str(Path(args.output).resolve())],
                    cwd=wd, check=True)
     frame.unlink(missing_ok=True)

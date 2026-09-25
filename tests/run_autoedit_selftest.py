@@ -10,6 +10,7 @@ ffmpegが無い環境では後半をスキップし、その旨を表示して�
 usage: python tests/run_autoedit_selftest.py
 """
 
+import argparse
 import copy
 import math
 import re
@@ -726,6 +727,30 @@ def test_e2e(tmp: Path):
     check("video" in streams and "audio" in streams, f"e2e: ストリーム欠落: {streams}")
 
 
+def test_preview_shows_telop(tmp: Path):
+    """preview の静止画に文字が実際に写っているか(フェードインの始点で撮ると透明になる)。"""
+    w, h = 640, 360
+    src = tmp / "preview_src.mp4"
+    subprocess.run(
+        ["ffmpeg", "-y", "-v", "error", "-f", "lavfi",
+         "-i", f"color=c=0x2a3f55:s={w}x{h}:d=2:r=24",
+         "-c:v", "libx264", "-preset", "ultrafast", str(src)], check=True)
+    out = tmp / "preview.png"
+    args = argparse.Namespace(input=str(src), config=str(auto_edit.DEFAULT_CONFIG), preset=None,
+                              output=str(out), text="テロップ表示の確認", title=None)
+    auto_edit.cmd_preview(args)
+    raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(out),
+                          "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+                         capture_output=True, check=True).stdout
+    check(len(raw) == w * h * 3, f"preview: 画像サイズが想定外 ({len(raw)} bytes)")
+    bg = raw[:3]  # 左上の隅はテロップが掛からない背景
+    changed = 0
+    for i in range(w * h // 2 * 3, len(raw), 3):  # テロップが出る下半分
+        if sum(abs(raw[i + c] - bg[c]) for c in range(3)) > 120:
+            changed += 1
+    check(changed > 300, f"preview: テロップの文字が写っていない (背景と違う画素 {changed})")
+
+
 def main() -> int:
     test_parse_silencedetect()
     test_build_keep_segments()
@@ -755,6 +780,7 @@ def main() -> int:
     if shutil.which("ffmpeg") and shutil.which("ffprobe"):
         tmp = Path(tempfile.mkdtemp(prefix="autoedit_selftest_"))
         test_e2e(tmp)
+        test_preview_shows_telop(tmp)
         ran_e2e = True
     else:
         print("[skip] ffmpegが無いため統合検証をスキップ(純ロジックのみ検証)")
