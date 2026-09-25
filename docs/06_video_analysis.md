@@ -74,6 +74,7 @@ py -3.12 -m venv .venv-video
 
 # 5. 文字化け予防（一度だけ）
 [Environment]::SetEnvironmentVariable("PYTHONUTF8", "1", "User")
+$env:PYTHONUTF8 = "1"   # 今開いているPowerShellにもすぐ反映
 
 # 6. 環境チェック
 .venv-video\Scripts\python.exe scripts\vlab.py doctor
@@ -81,9 +82,10 @@ py -3.12 -m venv .venv-video
 
 `doctor` で `[NG]` が0件ならOK（`[--]` は後で使う任意機能）。
 
-> 以降、`python scripts\vlab.py ...` と書いてあるところは
-> `.venv-video\Scripts\python.exe scripts\vlab.py ...` と読み替える
-> （この書き方ならPowerShellの「スクリプト実行禁止」設定に引っかからない）。
+> 以降、`python scripts\vlab.py ...` や `python -m pip ...` と書いてあるところは、`python` を
+> `.venv-video\Scripts\python.exe` に読み替える（例: `.venv-video\Scripts\python.exe scripts\vlab.py doctor`）。
+> この書き方ならPowerShellの「スクリプト実行禁止」設定に引っかからず、部品も正しい環境に入る。
+> **URLは必ず `"..."` で囲む**（`&` を含むURLを囲まないとPowerShellがエラーにする）。
 
 ## Step 2: 参考にする動画を選ぶ
 
@@ -92,14 +94,17 @@ py -3.12 -m venv .venv-video
 
 ## Step 3: ダウンロード不要の分析（推奨・無料）
 
-[Google AI Studio](https://aistudio.google.com/) で無料のAPIキーを作り、作業フォルダに `.env` というファイルを作って1行書く:
-
-```
-GEMINI_API_KEY=ここにキー
-```
+[Google AI Studio](https://aistudio.google.com/) で無料のAPIキーを作り、作業フォルダで次の1行を実行して
+`.env` というファイルに保存する（メモ帳だと `.env.txt` になったり文字コードの問題が出るので、このコマンドで作る）:
 
 ```powershell
-python scripts\vlab.py watch https://www.youtube.com/watch?v=動画ID
+Set-Content -Path .env -Value 'GEMINI_API_KEY=ここにキー' -Encoding ascii
+```
+
+`.env` はGitに入らない設定になっている（キーを公開しないため）。
+
+```powershell
+python scripts\vlab.py watch "https://www.youtube.com/watch?v=動画ID"
 ```
 
 → `analysis\watch_動画ID\gemini_watch.md` に、構成（区間ごとの役割）・映像の出どころ（3DCG/実写/図解…）・
@@ -114,10 +119,11 @@ python scripts\vlab.py watch https://www.youtube.com/watch?v=動画ID
 ### 4-1. 動画の取得（規約を理解した上で、本人の判断で）
 
 ```powershell
-python scripts\vlab.py fetch https://www.youtube.com/watch?v=動画ID
+python scripts\vlab.py fetch "https://www.youtube.com/watch?v=動画ID"
 ```
 
 注意文が出て `y` を押すと、`refs\動画ID.mp4`（720p）と字幕 `refs\動画ID.ja.vtt` が保存される。
+**1本の動画のURLだけ**受け付ける（チャンネルや再生リストのURLは一括取得になるので拒否する）。
 メインのGoogleアカウントのCookieは絶対に使わない。
 
 ### 4-2. 解析
@@ -127,18 +133,19 @@ python scripts\vlab.py analyze refs\動画ID.mp4
 ```
 
 10分の動画でノートPCなら5〜15分程度。お試しは `--max-seconds 60`（先頭1分だけ）。
-字幕が無い動画は `--whisper small`（要 `pip install faster-whisper`）で文字起こしできる。
+字幕が無い動画は `--whisper small` で文字起こしできる（先に
+`.venv-video\Scripts\python.exe -m pip install faster-whisper`）。
 
 できるもの（`analysis\動画ID\`）:
 
 | ファイル | 中身 |
 |---|---|
-| `report.html` | **ブラウザで開く**。タイムライン・分布グラフ・全ショット一覧 |
+| `report.html` | **ブラウザで開く**。タイムライン・分布グラフ・全ショット一覧（台詞の文字を含む＝複製。共有しない） |
 | `frames.csv` | 全フレームの計測値（Excelで開ける） |
 | `shots.csv` | ショットごとの尺・カメラワーク・イージング・色・テロップ率 |
 | `profile.json` | 数値の要約（スタイルプロファイル） |
 | `audio.json` | ラウドネス・話速・間・BGMの音量差・掛け合いの推定 |
-| `keyframes\`, `contact_sheet.jpg` | ショットの代表画（**参考動画の複製。共有・コミット禁止**） |
+| `keyframes\`, `filmstrips\`, `contact_sheet.jpg`, `transcript.json` | 代表画・コマ送り画像・台詞（**参考動画の複製。共有・コミット禁止**） |
 
 ### 4-3. レポートの読み方（主な指標）
 
@@ -166,14 +173,14 @@ python scripts\vlab.py analyze refs\動画ID.mp4
 python scripts\vlab.py frames refs\動画ID.mp4 1:23 1:26 --diff
 ```
 
-`--diff` で前のコマから動いた場所が赤く表示される。
+`--diff` で前のコマから動いた場所が赤く表示される。画像は `analysis\動画ID\filmstrips\` に保存される。
 
 ### 4-5. 映像の「意味」を足す（任意）
 
 どのショットが3DCG・実写・図解・AI生成っぽいか、を分類する方法は2つ:
 
 - **Claude Codeに見せる（追加料金なし）**: 「analysis/動画ID/contact_sheet.jpg を見て、各ショットを
-  3DCG/実写/図解などに分類して」と頼む
+  3DCG/実写/図解などに分類して」と頼む（画像はAnthropicに送信される。学習への利用はClaudeのプライバシー設定次第）
 - **Gemini（`annotate`）**: `python scripts\vlab.py annotate analysis\動画ID`
   （代表フレーム画像をGoogleに送信する。確認が出る）→ レポートとプロファイルに「映像の出どころの構成比」が入る
 
@@ -195,6 +202,7 @@ prompts/structure_analysis.md を読んで、analysis/動画ID の構成を分�
 
 複数本やったら「まとめの手順で configs/structure_template.md を作って」と頼む。
 台詞は引用せず、区間構成・つかみのパターン・驚きの間隔などの**抽象化した型**だけを残す。
+（文字起こし等はAnthropicに送信される。台本づくりの下敷きにはせず、型の抽出だけに使う）
 
 ## Step 7: 後片付け
 
@@ -205,6 +213,9 @@ python scripts\vlab.py purge analysis\動画ID --video refs\動画ID.mp4
 ```
 
 （最初から残さないなら `analyze ... --purge`）
+
+purge の後に `python scripts\vlab.py report analysis\動画ID` を実行すると、画像も台詞も含まない
+**数値だけのレポート**に作り直せる。人に見せてよいのはこちらだけ。
 
 ## 困ったとき
 
@@ -217,3 +228,5 @@ python scripts\vlab.py purge analysis\動画ID --video refs\動画ID.mp4
 | Gemini 429エラー | 無料枠の回数制限。時間をおくか `.env` に `GEMINI_MODEL=gemini-flash-lite-latest` |
 | Gemini 404エラー | モデル名が無効。AI Studioに表示されている名前を `GEMINI_MODEL` に書く |
 | 解析が遅い | `--step 2`（2フレームに1回）でおよそ半分の時間 |
+| `アンパサンド (&) 文字は許可されていません` | URLを `"..."` で囲む |
+| `Gemini APIキーがありません`（.envに書いたのに） | Step 3 の `Set-Content` コマンドで作り直す（メモ帳で作ると `.env.txt` やUTF-16になることがある） |

@@ -13,6 +13,7 @@ import io
 import json
 import math
 import re
+import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -41,7 +42,15 @@ def _http(url: str, data: bytes = None, headers: dict = None, timeout: float = 1
     try:
         with _OPENER.open(req, timeout=timeout) as r:
             return r.read()
-    except Exception as e:  # noqa: BLE001 - 接続失敗の原因をそのまま伝える
+    except urllib.error.HTTPError as e:     # エンジンは動いているが、要求が受け付けられなかった
+        try:
+            body = e.read()[:300].decode("utf-8", "replace")
+        except Exception:  # noqa: BLE001
+            body = ""
+        raise TTSError(f"音声エンジンがエラーを返しました (HTTP {e.code}): {url.split('?')[0]}\n  {body}\n"
+                       "  話者ID(speaker)がこのエンジンにあるか `vlab voices`(AivisSpeechは --engine aivis)"
+                       "で確認、または台詞が長すぎないか確認してください") from e
+    except (urllib.error.URLError, OSError) as e:
         raise TTSError(f"音声エンジンに接続できません: {url.split('?')[0]}\n  ({e})\n"
                        "  エンジン(VOICEVOX / AivisSpeech / Style-Bert-VITS2)を起動しているか確認してください。"
                        " 音声無しで試すなら --tts dummy") from e
@@ -63,7 +72,10 @@ class VoicevoxTTS:
         self.base = base_url.rstrip("/")
 
     def synth(self, text: str, cfg: dict):
-        speaker = int(cfg.get("speaker", 13))
+        if cfg.get("speaker") is None:
+            raise TTSError("voices の設定に speaker(話者ID)がありません。"
+                           "`vlab voices` で一覧を見て、台本の voices に speaker: 番号 を書いてください")
+        speaker = int(cfg["speaker"])
         q = _http(f"{self.base}/audio_query?" + urllib.parse.urlencode(
             {"text": text, "speaker": speaker}), data=b"")
         query = json.loads(q)
@@ -87,15 +99,16 @@ class VoicevoxTTS:
                 out.append((st["id"], f"{sp['name']}({st['name']})"))
         return out
 
-    def credit_name(self, cfg: dict) -> str:
+    def credit_name(self, cfg: dict):
+        """話者IDからキャラ名。エンジンに聞けなければ None。"""
         try:
-            sid = int(cfg.get("speaker", 13))
+            sid = int(cfg.get("speaker"))
             for i, name in self.speakers():
                 if i == sid:
                     return name.split("(")[0]
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
-        return f"speaker {cfg.get('speaker')}"
+        return None
 
 
 class SBV2TTS:
@@ -179,7 +192,9 @@ class Narrator:
     def synth(self, speaker: str, text: str, speed: float = 1.0):
         cfg = self.voice_cfg(speaker)
         cfg["_speed"] = round(float(speed), 4)
-        key = json.dumps({"t": text, "c": cfg}, ensure_ascii=False, sort_keys=True)
+        # 仮音声は目標の話速で長さが決まるので、話速もキャッシュの鍵に入れる
+        extra = {"cps": self.target_cps or 7.0} if cfg.get("engine") == "dummy" else {}
+        key = json.dumps({"t": text, "c": cfg, **extra}, ensure_ascii=False, sort_keys=True)
         h = hashlib.sha1(key.encode("utf-8")).hexdigest()[:20]
         path = self.cache_dir / f"{h}.wav"
         if path.exists():
@@ -188,17 +203,49 @@ class Narrator:
         y, sr = self.engine_for(cfg).synth(text, cfg)
         y = trim_silence(y, sr)
         sf.write(str(path), y, sr)
+        self._remember_name(cfg)        # エンジンが動いている今のうちにキャラ名を控える
         return y, sr
+
+    # --- クレジット(キャラ名)。キャッシュだけで再書き出しした時もエンジン無しで正しく出す
+    def _names_file(self) -> Path:
+        return self.cache_dir / "speakers.json"
+
+    def _name_key(self, cfg: dict) -> str:
+        return f"{cfg.get('engine', 'voicevox')}|{cfg.get('url') or ''}|{cfg.get('speaker')}"
+
+    def _load_names(self) -> dict:
+        try:
+            return json.loads(self._names_file().read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            return {}
+
+    def _remember_name(self, cfg: dict):
+        if cfg.get("engine") not in ("voicevox", "aivis") or cfg.get("credit"):
+            return
+        names = self._load_names()
+        key = self._name_key(cfg)
+        if key in names:
+            return
+        name = self.engine_for(cfg).credit_name(cfg)
+        if name:
+            names[key] = name
+            self._names_file().write_text(json.dumps(names, ensure_ascii=False, indent=1),
+                                          encoding="utf-8")
 
     def credit(self, speaker: str) -> str:
         cfg = self.voice_cfg(speaker)
-        name = cfg.get("credit") or self.engine_for(cfg).credit_name(cfg)
         eng = cfg.get("engine", "voicevox")
-        if eng == "voicevox":
-            return f"VOICEVOX:{name}"
-        if eng == "aivis":
-            return f"AivisSpeech:{name}"
-        return name
+        name = cfg.get("credit")
+        if not name:
+            name = self.engine_for(cfg).credit_name(cfg)
+            if not name and eng in ("voicevox", "aivis"):
+                name = self._load_names().get(self._name_key(cfg))
+            if not name and eng in ("voicevox", "aivis"):
+                print(f"      警告: {speaker} の声のキャラ名を取得できません。VOICEVOX等を起動して再実行するか、"
+                      "voices に credit: キャラ名 を書いてください", flush=True)
+                name = f"(要確認: 話者ID {cfg.get('speaker')})"
+        prefix = {"voicevox": "VOICEVOX:", "aivis": "AivisSpeech:"}.get(eng, "")
+        return name if not prefix or name.startswith(prefix) else prefix + name
 
 
 def trim_silence(y: np.ndarray, sr: int, thr_db: float = -45.0, keep: float = 0.03) -> np.ndarray:

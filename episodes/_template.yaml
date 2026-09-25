@@ -6,8 +6,8 @@ voices:
   教授: {engine: voicevox, speaker: 42, speed: auto}
 telop:
   speaker_colors: {教授: "#b8f5c8"}
-bgm: []
-  # - {file: assets/bgm/好きなBGM.mp3}          # 音量は目標スタイルの bgm_rel_db に自動調整
+bgm:
+  # - {file: assets/bgm/好きなBGM.mp3}          # 行頭の # を消すと有効。音量は目標スタイルに自動調整
 sources: []    # 台本の根拠(URL・書籍)。公開前に必ず確認する
 credits: []    # 概要欄に載せる素材クレジット(BGM・画像など)
 scenes:

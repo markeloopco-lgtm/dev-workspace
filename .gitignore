@@ -13,6 +13,7 @@ output/*
 # renders/ = 制作物・キャッシュ / assets/ = 自分の素材(ライセンス管理のためコミットしない)
 .venv-video/
 .env
+.env.*
 refs/
 analysis/
 renders/

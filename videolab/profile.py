@@ -183,6 +183,9 @@ def aggregate(profiles: list) -> dict:
         vals = [v for v in vals if v is not None]
         if not vals:
             _set_path(out, path, None)
+        elif path in ("format.width", "format.height", "format.fps"):
+            # 解像度・fpsは中央値だと 1600x900 や 45fps のような実在しない値になるので最頻値
+            _set_path(out, path, Counter(vals).most_common(1)[0][0])
         elif path.endswith("_mix"):
             keys = {k for v in vals for k in v}
             mix = {k: float(np.mean([v.get(k, 0.0) for v in vals])) for k in keys}
@@ -245,10 +248,35 @@ CHECKS = [
 ]
 
 
+def _metric(prof: dict, path: str):
+    """比較用の値。構成比(*_mix)に項目が無いのは「0%」であって「測れていない」ではない。"""
+    v = get_path(prof, path)
+    if v is None and "." in path:
+        parent_path = path.rsplit(".", 1)[0]
+        parent = get_path(prof, parent_path)
+        if parent_path.endswith("_mix") and isinstance(parent, dict) and parent:
+            return 0.0
+    return v
+
+
+def _has_move(prof: dict, prefixes: tuple) -> bool:
+    mix = get_path(prof, "camera.move_mix") or {}
+    return any(k.startswith(prefixes) and v > 0 for k, v in mix.items())
+
+
 def compare(target: dict, cand: dict) -> dict:
     rows = []
     for path, label, kind, tol, hi_msg, lo_msg in CHECKS:
-        tv, cv = get_path(target, path), get_path(cand, path)
+        tv, cv = _metric(target, path), _metric(cand, path)
+        if tv is not None and cv is None and get_path(cand, "camera.move_mix"):
+            # 目標にはズーム/パンがあるのに、自作側に1回も無い → 測れないのではなく「無い」
+            missing = {"camera.zoom_speed_median": ("zoom", "ズームが1回も無い。ゆっくり寄る/引くカットを入れる"),
+                       "camera.pan_speed_median": (("pan", "tilt"), "パンが1回も無い。横に流すカットを入れる")}
+            if path in missing and not _has_move(cand, missing[path][0] if isinstance(
+                    missing[path][0], tuple) else (missing[path][0],)):
+                rows.append({"metric": path, "label": label, "target": tv, "actual": None,
+                             "status": "ng", "advice": missing[path][1]})
+                continue
         if tv is None or cv is None:
             rows.append({"metric": path, "label": label, "target": tv, "actual": cv,
                          "status": "skip", "advice": "どちらかの値が測れていない"})
@@ -277,7 +305,7 @@ def compare(target: dict, cand: dict) -> dict:
 
 def compare_markdown(result: dict, target_name: str, cand_name: str) -> str:
     mark = {"ok": "OK", "warn": "△", "ng": "NG", "skip": "-"}
-    lines = [f"# スタイル差分レポート", "",
+    lines = ["# スタイル差分レポート", "",
              f"- 目標: `{target_name}`", f"- 対象: `{cand_name}`",
              f"- **一致度スコア: {result['score']} / 100**（{result['n_checked']}項目。OK=1, △=0.5, NG=0）",
              "", "| 判定 | 項目 | 目標 | 実測 | 助言 |", "|---|---|---|---|---|"]
@@ -300,8 +328,13 @@ def load_profile(path) -> dict:
     path = Path(path)
     if path.is_dir():
         path = path / "profile.json"
-    text = path.read_text(encoding="utf-8")
-    return json.loads(text) if path.suffix == ".json" else yaml.safe_load(text)
+    if not path.exists():
+        raise FileNotFoundError(f"スタイルプロファイルがありません: {path}")
+    text = path.read_text(encoding="utf-8-sig")
+    try:
+        return json.loads(text) if path.suffix == ".json" else yaml.safe_load(text)
+    except (json.JSONDecodeError, yaml.YAMLError) as e:
+        raise ValueError(f"スタイルプロファイルの書き方に誤りがあります: {path}\n{e}") from e
 
 
 def save_profile(prof: dict, path) -> None:

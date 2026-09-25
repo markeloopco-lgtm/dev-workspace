@@ -40,6 +40,7 @@ def run() -> int:
     add(OK if py >= (3, 10) else NG, "Python", platform.python_version(),
         "" if py >= (3, 10) else "Python 3.12 を入れてください: winget install -e --id Python.Python.3.12")
 
+    from . import ffmpeg_util as ff
     for mod, pip_name, required in [
         ("numpy", "numpy", True), ("cv2", "opencv-python", True), ("scipy", "scipy", True),
         ("yaml", "PyYAML", True), ("PIL", "Pillow", True), ("soundfile", "soundfile", True),
@@ -52,9 +53,8 @@ def run() -> int:
             add(OK, mod, getattr(m, "__version__", "installed"))
         except Exception:
             add(NG if required else OPT, mod, "未インストール",
-                f"pip install {pip_name}" + ("" if required else "  (任意)"))
+                ff.pip_cmd(pip_name) + ("" if required else "  (任意)"))
 
-    from . import ffmpeg_util as ff
     try:
         exe = ff.find_ffmpeg()
         add(OK, "ffmpeg", _ver([exe, "-version"]) or exe)
@@ -63,15 +63,22 @@ def run() -> int:
     fp = ff.find_ffprobe()
     add(OK if fp else OPT, "ffprobe", fp or "無し(ffmpegで代用)")
 
-    ytdlp = shutil.which("yt-dlp")
-    deno = shutil.which("deno")
-    if not deno:   # pip install "yt-dlp[default,deno]" は仮想環境のScriptsフォルダに入れる
-        cand = Path(sys.executable).parent / ("deno.exe" if os.name == "nt" else "deno")
-        deno = str(cand) if cand.exists() else None
-    add(OK if ytdlp or _has("yt_dlp") else OPT, "yt-dlp", ytdlp or ("python -m yt_dlp" if _has("yt_dlp") else "無し"),
-        "" if ytdlp or _has("yt_dlp") else 'pip install -U "yt-dlp[default,deno]"  (参考動画の取得に必要)')
+    # fetch と同じ選び方(仮想環境の yt-dlp を優先)で表示する
+    deno = None
+    cand = Path(sys.executable).parent / ("deno.exe" if os.name == "nt" else "deno")
+    if cand.exists():      # pip install "yt-dlp[default,deno]" は仮想環境のScriptsに入れる
+        deno = str(cand)
+    deno = deno or shutil.which("deno")
+    ytdlp_hint = ff.pip_cmd('-U "yt-dlp[default,deno]"')
+    if _has("yt_dlp"):
+        add(OK, "yt-dlp", "仮想環境の python -m yt_dlp")
+    elif shutil.which("yt-dlp"):
+        add(OPT, "yt-dlp", shutil.which("yt-dlp") + "(仮想環境外)",
+            f"仮想環境に入れるのがおすすめ: {ytdlp_hint}")
+    else:
+        add(OPT, "yt-dlp", "無し", f"{ytdlp_hint}  (参考動画の取得に必要)")
     add(OK if deno else OPT, "deno(yt-dlp用)", deno or "無し",
-        "" if deno else 'pip install -U "yt-dlp[default,deno]" で一緒に入ります')
+        "" if deno else f"{ytdlp_hint} で一緒に入ります")
 
     try:
         from .produce.blender_runner import find_blender
@@ -96,10 +103,15 @@ def run() -> int:
         add(NG, "日本語フォント", str(e))
 
     from .vlm import load_env
-    load_env()
+    try:
+        load_env()
+    except Exception as e:  # noqa: BLE001
+        add(NG, ".env", f"読めません({e.__class__.__name__})", "docs/06 Step3 のコマンドで作り直してください")
     key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
     add(OK if key else OPT, "Gemini APIキー", "設定済み" if key else "未設定",
-        "" if key else "任意。 .env に GEMINI_API_KEY=... (AI Studioで無料発行)")
+        "" if key else "任意。docs/06 Step3 の Set-Content コマンドで .env を作る(AI Studioで無料発行)")
+    if Path(".env.txt").exists() and not Path(".env").exists():
+        add(OPT, ".env", ".env.txt になっている", "ファイル名を .env に変えてください(メモ帳が .txt を付けることがある)")
 
     cwd = str(Path.cwd())
     ascii_ok = all(ord(c) < 128 for c in cwd)
@@ -108,7 +120,8 @@ def run() -> int:
     if os.name == "nt":
         utf8 = os.environ.get("PYTHONUTF8") == "1"
         add(OK if utf8 else OPT, "PYTHONUTF8", "1" if utf8 else "未設定",
-            "" if utf8 else '[Environment]::SetEnvironmentVariable("PYTHONUTF8","1","User") で文字化け予防')
+            "" if utf8 else '[Environment]::SetEnvironmentVariable("PYTHONUTF8","1","User") を実行'
+            ' → PowerShellを開き直す(文字化け予防)')
     free = shutil.disk_usage(Path.cwd()).free / 1e9
     add(OK if free > 20 else NG, "空き容量", f"{free:.0f} GB",
         "" if free > 20 else "動画・レンダリング用に20GB以上空けてください")

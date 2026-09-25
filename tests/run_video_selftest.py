@@ -9,7 +9,6 @@ usage: python tests/run_video_selftest.py [--quick]
 """
 
 import json
-import math
 import sys
 import tempfile
 import time
@@ -69,6 +68,27 @@ def test_analyzer(tmp: Path):
     return len(shots)
 
 
+def test_analyzer_hard(tmp: Path):
+    """見落としやすい切替: 1.2秒のディゾルブ・ホイップパン・白を挟む切替・まばらな星空のカット。"""
+    video = tmp / "hard.mp4"
+    truth = vf.build_hard_fixture(video)
+    info, fa, arrays, trans, shots = analyze.analyze_frames(video, quiet=True)
+    diss = [t for t in trans if t.kind == "dissolve"]
+    a, b = truth["dissolve"]
+    check(len(diss) == 1 and a <= diss[0].frame <= b and diss[0].length >= 0.7 * (b - a),
+          f"遅いディゾルブ {[(t.frame, t.length) for t in diss]} (正解 {a}-{b})")
+    cuts = [t.frame for t in trans if t.kind == "cut"]
+    check(len(cuts) == len(truth["cuts"]), f"カット数 {cuts} (正解 {truth['cuts']})")
+    for c in truth["cuts"]:
+        check(any(abs(c - x) <= 1 for x in cuts), f"カット未検出(ホイップ/白/星空): {c} (検出 {cuts})")
+    check(len(shots) == truth["n_shots"], f"ショット数 {len(shots)} (正解 {truth['n_shots']})")
+    check(not any(s.kind == "black" for s in shots), "まばらな星空が暗転扱いになった")
+    stars = [s for s in shots if s.start >= truth["cuts"][2] - 1][:2]
+    check(len(stars) == 2 and stars[0].stats.get("camera") == "zoom_in"
+          and stars[1].stats.get("camera") == "pan_right",
+          f"星空ショットのカメラ {[s.stats.get('camera') for s in stars]}")
+
+
 def test_audio(tmp: Path):
     wav = tmp / "speech.wav"
     truth = vf.build_audio_fixture(wav)
@@ -97,6 +117,32 @@ def test_audio(tmp: Path):
         "00:00:02.010 --> 00:00:04.000\nもしも地球が\n止まったら\n\n", encoding="utf-8")
     cues = audio.parse_subtitles(vtt)
     check([c["text"] for c in cues] == ["もしも地球が", "止まったら"], f"VTT解析 {cues}")
+    # 自動字幕: 単語時刻から発話の終わりを推定し、行の表示が伸びている「間」を発話に数えない
+    vtt2 = tmp / "auto.ja.vtt"
+    vtt2.write_text(
+        "WEBVTT\nKind: captions\nLanguage: ja\n\n"
+        "00:00:00.000 --> 00:00:03.000 align:start position:0%\n[音楽]\n\n"
+        "00:00:03.000 --> 00:00:05.990 align:start position:0%\n \n"
+        "もしも<00:00:03.500><c>地球の</c><00:00:04.200><c>自転が</c>\n\n"
+        "00:00:05.990 --> 00:00:06.000 align:start position:0%\nもしも地球の自転が\n \n\n"
+        "00:00:06.000 --> 00:00:09.990 align:start position:0%\nもしも地球の自転が\n"
+        "止まったら<00:00:06.600><c>どうなる</c><00:00:07.000><c>でしょうか</c>\n\n"
+        "00:00:09.990 --> 00:00:10.000 align:start position:0%\n止まったらどうなるでしょうか\n \n\n"
+        "00:00:10.000 --> 00:00:12.000 align:start position:0%\n止まったらどうなるでしょうか\n"
+        "赤道<00:00:10.500><c>では</c>\n", encoding="utf-8")
+    c2 = audio.parse_subtitles(vtt2)
+    check([c["text"] for c in c2] == ["もしも地球の自転が", "止まったらどうなるでしょうか", "赤道では"],
+          f"自動字幕の本文 {[c['text'] for c in c2]}")
+    st = audio.speech_stats(c2, 12.0)
+    check(st["gap_median"] is not None and st["speech_ratio"] < 0.8,
+          f"自動字幕の間が発話扱い {st}")
+    # 手動字幕の2行cueは全文を使い、空のcueが次のcueを飲み込まない
+    srt = tmp / "manual.srt"
+    srt.write_text("1\n00:00:01,000 --> 00:00:02,000\n\n2\n00:00:03,000 --> 00:00:05,000\n"
+                   "もしも地球の自転が\n突然止まったら？\n\n", encoding="utf-8")
+    c3 = audio.parse_subtitles(srt)
+    check([(c["start"], c["text"]) for c in c3] == [(3.0, "もしも地球の自転が突然止まったら？")],
+          f"手動字幕の解析 {c3}")
 
 
 def test_profile(tmp: Path, n_shots_expected: int):
@@ -217,6 +263,95 @@ scenes:
         pass
 
 
+def test_guards(tmp: Path):
+    """安全装置: 参考動画フォルダの素材拒否・URL検査・purge・台本の検査・長いタイトル。"""
+    import cv2
+    from videolab import fetch
+    from videolab.produce.episode import EpisodeError, load_episode
+    from videolab.produce.telop import DEFAULT_TELOP, DEFAULT_TITLE, TextRenderer, find_font
+
+    # 上の階層に analysis という名前のフォルダがあっても自分の素材は拒否しない
+    proj = tmp / "Analysis" / "proj"
+    (proj / "assets").mkdir(parents=True)
+    (proj / "refs").mkdir()
+    img = proj / "assets" / "own.png"
+    ff.imwrite(img, np.zeros((90, 160, 3), np.uint8))
+    ff.imwrite(proj / "refs" / "ref.png", np.zeros((90, 160, 3), np.uint8))
+    ep = proj / "ep.yaml"
+    ep.write_text("scenes:\n  - lines: [テスト]\n    visuals: [{type: image, path: assets/own.png}]\n",
+                  encoding="utf-8")
+    try:
+        load_episode(ep)
+    except EpisodeError as e:
+        check(False, f"上位フォルダ名で自分の素材が拒否された: {e}")
+    # 惑星比較のテクスチャ(複数)に参考動画フォルダの画像 → 拒否
+    ep.write_text("scenes:\n  - lines: [テスト]\n    visuals: [{type: space, template: planet_compare,"
+                  " params: {presets: [earth, moon], textures: [refs/ref.png, null]}}]\n",
+                  encoding="utf-8")
+    try:
+        load_episode(ep)
+        check(False, "textures 経由の refs/ 素材が拒否されなかった")
+    except EpisodeError:
+        pass
+    # 話者名の打ち間違い・無いBGM → 分かりやすいエラー
+    for body, what in [
+        ("voices: {ナレーター: {engine: dummy}}\nscenes:\n  - lines: [{speaker: ナレータ, text: あ}]\n", "話者"),
+        ("bgm: [{file: assets/typo.mp3}]\nscenes:\n  - lines: [テスト]\n", "BGM"),
+        ("scenes:\n  - lines: [{speaker: a, text: 'x'}\n", "YAML"),
+    ]:
+        ep.write_text(body, encoding="utf-8")
+        try:
+            load_episode(ep)
+            check(False, f"{what}の誤りが検出されなかった")
+        except EpisodeError:
+            pass
+    # 下書きでは未配置の素材を仮カードで代用
+    ep.write_text("scenes:\n  - lines: [テスト]\n    visuals: [{type: image, path: assets/todo.png}]\n",
+                  encoding="utf-8")
+    e2 = load_episode(ep, allow_missing=True)
+    check(len(e2["_missing"]) == 1 and e2["scenes"][0]["visuals"][0]["type"] == "color",
+          "下書きの素材TODO代用")
+    # 1本の動画URLだけ受け付ける
+    check(fetch.single_video_url("https://www.youtube.com/watch?v=abcdEFGhijk&list=PLx&index=3")
+          == "https://www.youtube.com/watch?v=abcdEFGhijk", "URLの正規化")
+    for bad in ("https://www.youtube.com/@someone/videos", "https://www.youtube.com/playlist?list=PLabc"):
+        try:
+            fetch.single_video_url(bad)
+            check(False, f"一括取得になるURLが拒否されなかった: {bad}")
+        except RuntimeError:
+            pass
+    # purge: [ ] を含む名前でも字幕・情報ファイルまで消す / 数値データは残す
+    refs = tmp / "prefs"
+    refs.mkdir()
+    stem = "[SAMPLE] title [abcdefghijk]"
+    for suf in (".mp4", ".ja.vtt", ".info.json"):
+        (refs / (stem + suf)).write_text("x", encoding="utf-8")
+    an = tmp / "an_purge"
+    (an / "keyframes").mkdir(parents=True)
+    (an / "profile.json").write_text("{}", encoding="utf-8")
+    (an / "transcript.json").write_text("[]", encoding="utf-8")
+    pipeline.purge(an, refs / (stem + ".mp4"))
+    check(not any(refs.iterdir()), f"purgeで残ったファイル: {list(refs.iterdir())}")
+    check((an / "profile.json").exists() and not (an / "keyframes").exists(), "purgeの対象")
+    # 長いタイトル・縦動画でも描画が落ちず画面内に収まる
+    font = find_font()
+    for (w, h) in [(1920, 1080), (960, 540), (1080, 1920)]:
+        tr = TextRenderer(w, h, {**DEFAULT_TELOP, **DEFAULT_TITLE}, font)
+        for t in ("もしも地球の自転が止まったら何が起こる？", "潮を起こす力は距離の3乗に反比例",
+                  "とても長いタイトルがここに入っていて画面に収まるかどうかを確かめるための文章です"):
+            arr, x, y = tr.render(t)
+            check(arr.shape[1] <= w and x >= 0, f"タイトルがはみ出す {w}x{h} {t}")
+    # パンで画面端に鏡像の帯が出ない(左右の端の列が原画にある色だけになる)
+    from videolab.produce.sources import CameraMove, ImageSource
+    grad = np.tile(np.linspace(0, 255, 800, dtype=np.uint8)[None, :, None], (450, 1, 3))
+    ff.imwrite(tmp / "grad.png", grad)
+    src = ImageSource(tmp / "grad.png", 30, 320, 180, CameraMove("pan_right", 0.12))
+    for i in (0, 29):
+        row = src.frame(i)[90, :, 0].astype(int)
+        check(np.all(np.diff(row) >= -1), f"パンの端に鏡像の帯 (frame {i})")
+    del cv2
+
+
 def main() -> int:
     quick = "--quick" in sys.argv
     tmp = Path(tempfile.mkdtemp(prefix="vlab_selftest_"))
@@ -225,9 +360,11 @@ def main() -> int:
     n = None
     for name, fn in steps:
         n = fn()
+    test_analyzer_hard(tmp)
     test_audio(tmp)
     test_profile(tmp, n)
     test_timeline_units()
+    test_guards(tmp)
     import os
     cwd = os.getcwd()
     os.chdir(tmp)   # renders/cache を一時フォルダに作らせる

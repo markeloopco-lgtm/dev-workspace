@@ -22,7 +22,7 @@ python scripts/vlab.py produce episodes/my_first.yaml --check                   
 | `bgm` | | BGMのリスト。`{file, from_scene, to_scene, volume_db}` |
 | `sources` | | 台本の根拠（URL・書籍）。**公開前に必ず確認する** |
 | `credits` | | 概要欄に載せる素材クレジット（`credits.txt` に書き出される） |
-| `style` / `output` / `resolution` / `fps` | | 目標スタイル・出力先・解像度・fpsの上書き |
+| `style` / `output` / `resolution` / `fps` | | 目標スタイル・出力先・解像度（既定 1920x1080）・fpsの上書き |
 
 ## voices（話者）
 
@@ -36,11 +36,11 @@ voices:
 | キー | 内容 |
 |---|---|
 | `engine` | `voicevox` / `aivis`（AivisSpeech）/ `sbv2`（Style-Bert-VITS2）/ `dummy`（仮音声） |
-| `speaker` | VOICEVOX/AivisSpeechの話者ID。`python scripts/vlab.py voices` で一覧 |
+| `speaker` | VOICEVOX/AivisSpeechの話者ID（必須）。`vlab voices`（AivisSpeechは `--engine aivis`）で一覧。IDはエンジンごとに違う |
 | `speed` | `auto` = 目標スタイルの話速（文字/秒）に合わせて自動調整。数値なら固定倍率 |
 | `pitch` `intonation` `volume` | VOICEVOXの音高・抑揚・音量 |
 | `url` | エンジンのURLを変える場合（既定: 50021 / 10101 / 5000番ポート） |
-| `credit` | クレジット表記を手で指定する場合 |
+| `credit` | クレジット表記のキャラ名を手で指定する場合（`ちび式じい` でも `VOICEVOX:ちび式じい` でもよい） |
 
 ## scenes（シーン）
 
@@ -108,7 +108,7 @@ visuals:
 
 ### space のテンプレート
 
-`python -c "from videolab.produce.space import describe_templates; print(describe_templates())"`
+`.venv-video\Scripts\python.exe -c "from videolab.produce.space import describe_templates; print(describe_templates())"`
 で全パラメータの説明を表示できる。
 
 | template | 主なparams |

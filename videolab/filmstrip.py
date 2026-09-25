@@ -57,7 +57,8 @@ def filmstrip(video, start, end, out_path=None, every: int = 1, cols: int = 6,
             break
     if not tiles:
         raise ValueError("指定区間からフレームを取り出せませんでした")
-    out_path = Path(out_path or Path("analysis") / f"{video.stem}_filmstrip_{t0:.1f}-{t1:.1f}.png")
+    # 解析フォルダの中に置く(vlab purge で一緒に消えるように)
+    out_path = Path(out_path or Path("analysis") / video.stem / "filmstrips" / f"{t0:.1f}-{t1:.1f}.png")
     out_path.parent.mkdir(parents=True, exist_ok=True)
     per_sheet = cols * 8
     outs = []

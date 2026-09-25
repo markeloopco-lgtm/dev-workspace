@@ -205,7 +205,8 @@ class FrameAnalyzer:
         self.dw, self.dh = DECODE_W, ff.even(DECODE_W * info.height / info.width)
         self.mw, self.mh = METRIC_W, ff.even(METRIC_W * info.height / info.width)
         self.fw, self.fh = FLOW_W, ff.even(FLOW_W * info.height / info.width)
-        self.sample_every = max(1, int(round(self.fps / SAMPLE_HZ)))
+        # 標本間隔は「解析するフレーム」(stepの倍数)で数える。そうしないと --step で5Hzが崩れる
+        self.sample_every = self.step * max(1, int(round(self.fps / (self.step * SAMPLE_HZ))))
         self.cols = {k: [] for k in (
             "frame", "luma", "contrast", "luma_max", "sat", "colorfulness", "hue_deg",
             "hue_strength", "edge", "motion")}
@@ -235,7 +236,10 @@ class FrameAnalyzer:
         c["frame"].append(idx)
         c["luma"].append(float(luma.mean()))
         c["contrast"].append(float(luma.std()))
-        c["luma_max"].append(float(np.percentile(luma, 99.9)))
+        # 暗転判定用の「最も明るい所」は縮小前(640px)の8番目に明るい画素で測る。
+        # 縮小すると点のような星が平均されて消え、まばらな星空が「真っ黒」に見えてしまう
+        g640 = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY).ravel()
+        c["luma_max"].append(float(np.partition(g640, -8)[-8]) / 255.0)
         c["sat"].append(float(s.mean()))
         c["colorfulness"].append(_colorfulness(f))
         c["hue_deg"].append(float(self._hue_centers[int(hue_hist.argmax())] * 2.0))
@@ -247,13 +251,15 @@ class FrameAnalyzer:
         self.hists.append(hist / max(hist.sum(), 1.0))
         # 構図比較用の縮小画は下端のテロップ帯を除いて作る(同じショット内でのテロップ
         # 切替をカットと誤認しないため)
-        top = gray[: int(self.mh * (1.0 - CUT_IGNORE_BOTTOM))]
-        self.thumbs.append(cv2.resize(top, (THUMB_W, THUMB_H), interpolation=cv2.INTER_AREA))
+        # 暗い画(星空)の微妙な濃淡を潰さないよう小数で持つ(メモリ節約のためfloat16)
+        top = gray[: int(self.mh * (1.0 - CUT_IGNORE_BOTTOM))].astype(np.float32)
+        self.thumbs.append(cv2.resize(top, (THUMB_W, THUMB_H),
+                                      interpolation=cv2.INTER_AREA).astype(np.float16))
 
         fgray = cv2.resize(gray, (self.fw, self.fh), interpolation=cv2.INTER_AREA)
         if self._prev_flow is not None:
             flow = cv2.calcOpticalFlowFarneback(self._prev_flow, fgray, None, 0.5, 3, 9, 2, 5, 1.1, 0)
-            c["motion"].append(float(np.linalg.norm(flow, axis=2).mean() / self.fw))
+            c["motion"].append(float(np.linalg.norm(flow, axis=2).mean() / self.fw / self.step))
         else:
             c["motion"].append(0.0)
         self._prev_flow = fgray
@@ -318,7 +324,7 @@ def _ncc_dist(a: np.ndarray, b: np.ndarray) -> float:
     a = a.astype(np.float32).ravel()
     b = b.astype(np.float32).ravel()
     sa, sb = a.std(), b.std()
-    if sa < 2.0 or sb < 2.0:
+    if sa < 0.2 or sb < 0.2:      # 本当に一様な画(黒・白一色)だけ平均輝度差で代替
         return min(1.0, abs(a.mean() - b.mean()) / 40.0)
     ncc = float(((a - a.mean()) * (b - b.mean())).mean() / (sa * sb))
     return float(np.clip(1.0 - ncc, 0.0, 1.0))
@@ -379,7 +385,8 @@ def _dissolve_fit(thumbs: np.ndarray, s: int, e: int):
 
 
 def detect_transitions(scores: np.ndarray, thumbs: np.ndarray, hists: np.ndarray,
-                       luma: np.ndarray, luma_max: np.ndarray, fps: float) -> list:
+                       luma: np.ndarray, luma_max: np.ndarray, fps: float,
+                       contrast: np.ndarray = None) -> list:
     n = len(scores)
     trans = []
     if n < 3:
@@ -387,6 +394,7 @@ def detect_transitions(scores: np.ndarray, thumbs: np.ndarray, hists: np.ndarray
     radius = max(5, int(fps))
     med = _local_median(scores, radius)
     black = np.array([is_black(luma[i], luma_max[i]) for i in range(n)])
+    flat = (np.asarray(contrast) < 0.02) if contrast is not None else None
 
     # 1) 黒フレーム区間(フェードアウト/イン、暗転)
     taken = np.zeros(n, dtype=bool)
@@ -425,32 +433,60 @@ def detect_transitions(scores: np.ndarray, thumbs: np.ndarray, hists: np.ndarray
                 continue
             if t - last_cut < min_gap:
                 continue
-            trans.append(Transition(frame=t, kind="cut", length=0, strength=float(sc)))
-            last_cut = t
-            taken[max(0, t - 1):t + 1] = True
+            # 大きな変化が数フレーム続く切替(ホイップパン・白飛び・グリッチ)は1つのカットにまとめる
+            e = t
+            lim = min(n - 1, t + max(3, int(0.5 * fps)))
+            while e + 1 <= lim and not taken[e + 1] and scores[e + 1] > 0.1:
+                e += 1
+            if e >= lim:          # 0.5秒以内に落ち着かない = 動きの速いショットへの普通のカット
+                e = t
+            if flat is not None and flat[e]:
+                # 白一色などの平坦な画を挟む切替: 平坦な区間(≦0.3秒)の直後にもう一度大きく変わる
+                m = e + 1
+                while m < n and m - e <= int(0.3 * fps) and flat[m] and scores[m] <= 0.1:
+                    m += 1
+                if m < n and scores[m] > 0.28 and not taken[m]:
+                    e = m
+            trans.append(Transition(frame=e, kind="cut", length=e - t, strength=float(sc)))
+            last_cut = e
+            taken[max(0, t - 1):e + 1] = True
 
     # 3) ディゾルブ(ツインコンパリゾン + 線形ブレンド検証)
-    k = max(4, int(round(0.4 * fps)))
-    t = k + 1
+    #    ゆっくりしたディゾルブも拾えるよう、0.4/1.0/1.6秒離れたフレームを短い方から比べる
+    ks = sorted({max(4, int(round(c * fps))) for c in (0.4, 1.0, 1.6)})
+    cap = 4 * fps
+    t = ks[0] + 1
     while t < n - 1:
-        if taken[t - k:t + 1].any():
-            t += 1
-            continue
-        far = _ncc_dist(thumbs[t - k], thumbs[t])
-        if far < 0.35:
+        far = k = None
+        for kk in ks:
+            if t - kk < 1 or taken[t - kk:t + 1].any():
+                break                      # それより長い基線も重なるので打ち切り
+            d = _ncc_dist(thumbs[t - kk], thumbs[t])
+            if d >= 0.35:
+                far, k = d, kk
+                break
+        if far is None:
             t += 1
             continue
         # 変化が続いている範囲を広げて端点を探す
         s = t - k
-        while s > 1 and not taken[s - 1] and scores[s - 1] > 0.012 and t - s < 3 * fps:
+        while s > 1 and not taken[s - 1] and scores[s - 1] > 0.012 and t - s < cap:
             s -= 1
         e = t
-        while e < n - 1 and not taken[e + 1] and scores[e + 1] > 0.012 and e - s < 3 * fps:
+        while e < n - 1 and not taken[e + 1] and scores[e + 1] > 0.012 and e - s < cap:
             e += 1
         if s >= 1 and e < n and e - s >= 3:
             ok, _ = _dissolve_fit(thumbs, s, e)
             if ok:
-                trans.append(Transition(frame=(s + e) // 2, kind="dissolve", length=e - s,
+                # 実際に混ざっているフレームだけに絞って長さを出す
+                a0 = thumbs[s - 1].astype(np.float32).ravel()
+                dv = thumbs[e].astype(np.float32).ravel() - a0
+                den = float(dv @ dv) or 1.0
+                al = np.array([float((thumbs[i].astype(np.float32).ravel() - a0) @ dv) / den
+                               for i in range(s, e)])
+                ins = np.nonzero((al > 0.03) & (al < 0.97))[0]
+                s2, e2 = (s + int(ins[0]), s + int(ins[-1]) + 1) if len(ins) else (s, e)
+                trans.append(Transition(frame=(s2 + e2) // 2, kind="dissolve", length=e2 - s2,
                                         strength=float(far)))
                 taken[s - 1:e + 1] = True
                 t = e + 1
@@ -472,8 +508,12 @@ def build_shots(transitions: list, n: int, fps: float) -> list:
         if tr.kind == "_black_start":
             pending_black_start = tr.frame
             continue
-        end = pending_black_start if (tr.kind == "fade_black" and pending_black_start is not None) \
-            else tr.frame
+        if tr.kind == "fade_black" and pending_black_start is not None:
+            end = pending_black_start
+        elif tr.kind == "cut" and tr.length > 0:
+            end = tr.frame - tr.length     # ホイップ等の切替中のフレームはどちらのショットにも入れない
+        else:
+            end = tr.frame
         if end - cur_start >= 1:
             shots.append(Shot(len(shots), cur_start, end, fps, cur_trans, cur_len))
         cur_start, cur_trans, cur_len = tr.frame, tr.kind, tr.length / fps
@@ -662,7 +702,7 @@ def analyze_frames(video_path, step: int = 1, max_seconds: float = None, quiet: 
     scores = frame_change_scores(hists, thumbs)
     eff_fps = fa.fps / fa.step
     transitions = detect_transitions(scores, thumbs, hists, arrays["luma"], arrays["luma_max"],
-                                     eff_fps)
+                                     eff_fps, arrays["contrast"])
     # stepを間引いた場合は行番号→元フレーム番号に戻す
     for tr in transitions:
         tr.frame = int(arrays["frame"][min(tr.frame, len(arrays["frame"]) - 1)])

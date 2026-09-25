@@ -7,6 +7,7 @@ ffmpegの複雑なフィルタ指定(Windowsでのパスのエスケープ問題
 import json
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -45,7 +46,8 @@ def _base_source(shot, w: int, h: int, fps: float, engine: str, cache_dir: Path)
     if t == "video":
         return src_mod.VideoSource(v["path"], n, w, h, float(v.get("start", 0.0)), cam, fps)
     if t == "color":
-        return src_mod.ColorSource(n, w, h, v.get("color", "#101018"), v.get("color2"))
+        return src_mod.ColorSource(n, w, h, v.get("color", "#101018"), v.get("color2"),
+                                   label=v.get("_todo"))
     if t == "space":
         make_space_source = _space_factory()
         return make_space_source(v.get("template", "planet"), dict(v.get("params") or {}), n, w, h,
@@ -75,9 +77,11 @@ def render_video(plan, audio_wav: Path, out_path: Path, engine: str = "auto",
     out_path.parent.mkdir(parents=True, exist_ok=True)
     cmd = [ff.find_ffmpeg(), "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24",
            "-s", f"{w}x{h}", "-r", f"{fps}", "-i", "-", "-i", str(audio_wav),
-           *encoder_args(encoder, draft), "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
+           *encoder_args(encoder, draft), "-c:a", "aac", "-b:a", "320k", "-ar", "48000",
            "-t", f"{plan.duration:.3f}", "-movflags", "+faststart", str(out_path)]
-    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+    errf = tempfile.TemporaryFile()      # stderrをパイプにすると詰まることがあるので一時ファイルへ
+    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=errf)
+    broken = False
     shots = plan.shots
     live = {}
     t0 = time.time()
@@ -102,7 +106,13 @@ def render_video(plan, audio_wav: Path, out_path: Path, engine: str = "auto",
                     alpha = min(1.0, u / 0.12, (1 - u) / 0.2)
                     arr, x, y = title.render(ev["text"])
                     blend(frame, arr, x, y, max(0.0, alpha))
-            proc.stdin.write(np.ascontiguousarray(frame).tobytes())
+            if frame.dtype != np.uint8 or frame.shape != (h, w, 3):
+                raise RuntimeError(f"内部エラー: フレームの形式が不正です {frame.dtype} {frame.shape}")
+            try:
+                proc.stdin.write(np.ascontiguousarray(frame).tobytes())
+            except OSError:      # ffmpegが先に終了した(BrokenPipe / WindowsではEINVAL)
+                broken = True
+                break
             if not quiet and (f % 60 == 0 or f == plan.total_frames - 1):
                 el = time.time() - t0
                 eta = el / (f + 1) * (plan.total_frames - f - 1)
@@ -115,12 +125,19 @@ def render_video(plan, audio_wav: Path, out_path: Path, engine: str = "auto",
             proc.stdin.close()
         except Exception:
             pass
-        err = proc.stderr.read().decode("utf-8", "replace")
         rc = proc.wait()
+        errf.seek(0)
+        err = errf.read().decode("utf-8", "replace")
+        errf.close()
     if not quiet:
         sys.stderr.write("\n")
-    if rc != 0:
-        raise RuntimeError(f"エンコードに失敗しました:\n{err[-1500:]}")
+    if rc != 0 or broken:
+        hint = ""
+        if encoder == "nvenc":
+            hint = "\n  NVENCが使えない可能性: GPUドライバを更新するか --encoder x264 で再実行してください"
+        elif "Permission denied" in err:
+            hint = "\n  出力ファイルが動画プレーヤー等で開かれていないか確認してください"
+        raise RuntimeError(f"エンコードに失敗しました:\n{err[-1500:]}{hint}")
     return out_path
 
 
@@ -182,13 +199,18 @@ def produce_episode(episode_path, style_path=None, out_path=None, tts: str = Non
     """台本YAMLから完成動画を作る。返り値: 出力ファイル類のパスと統計。"""
     from ..profile import load_profile
 
-    ep = load_episode(episode_path)
+    say = (lambda *a: None) if quiet else (lambda *a: print(*a, flush=True))
+    # 下書き(--draft)では未配置の素材を「素材TODO」の仮カードで代用して最後まで通す
+    ep = load_episode(episode_path, allow_missing=draft)
+    for m in ep.get("_missing", []):
+        say(f"      素材TODO(未配置・仮カードで代用): {m}")
     style_path = style_path or ep.get("style") or "configs/style_profile.yaml"
     style = load_profile(style_path)
-    say = (lambda *a: None) if quiet else (lambda *a: print(*a, flush=True))
     fmt = style.get("format", {})
-    w, h = ep.get("resolution") or [fmt.get("width", 1920), fmt.get("height", 1080)]
+    # 出力解像度は台本の resolution > 1920x1080。参考動画の解析解像度(取得は720p上限)は使わない
+    w, h = ep.get("resolution") or [1920, 1080]
     fps = float(ep.get("fps") or fmt.get("fps") or 30.0)
+    w, h = ff.even(w), ff.even(h)
     if draft:
         w, h = ff.even(w / 2), ff.even(h / 2)
     out_path = Path(out_path or ep.get("output") or Path("renders") / f"{ep['_name']}.mp4")
@@ -208,9 +230,13 @@ def produce_episode(episode_path, style_path=None, out_path=None, tts: str = Non
     mix_stats = mix(plan, style, wav)
     say(f"      ナレーション {mix_stats['speech_lufs']} LUFS → 完成 {mix_stats['final_lufs']} LUFS")
     say("[3/4] 映像レンダリング")
-    render_video(plan, wav, out_path, engine=engine, encoder=encoder, draft=draft,
-                 telop_style=ep["_telop_style"], title_style=ep["_title_style"],
-                 cache_dir=cache, quiet=quiet, callout_style=ep.get("callout_style"))
+    try:
+        render_video(plan, wav, out_path, engine=engine, encoder=encoder, draft=draft,
+                     telop_style=ep["_telop_style"], title_style=ep["_title_style"],
+                     cache_dir=cache, quiet=quiet, callout_style=ep.get("callout_style"))
+    except BaseException:
+        wav.unlink(missing_ok=True)
+        raise
     say("[4/4] 字幕・クレジット・設計図を書き出し")
     srt = Path(str(out_path.with_suffix("")) + ".ja.srt")
     write_srt([{"start": ln.start, "end": ln.start + ln.dur, "text": ln.text}
@@ -234,4 +260,4 @@ def produce_episode(episode_path, style_path=None, out_path=None, tts: str = Non
     wav.unlink(missing_ok=True)
     say(f"完成: {out_path}")
     return {"video": out_path, "srt": srt, "credits": cred_path, "plan": plan_path,
-            "mix": mix_stats}
+            "mix": mix_stats, "style": str(style_path), "missing": ep.get("_missing", [])}

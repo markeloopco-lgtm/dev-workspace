@@ -180,3 +180,69 @@ def build_audio_fixture(path: Path, seconds: float = 12.0, sr: int = 48000) -> d
     import soundfile as sf
     sf.write(str(path), stereo, sr)
     return {"speech_segments": segs, "duration": seconds}
+
+
+def sparse_stars(seed: int, w: int, h: int, n: int = 160) -> np.ndarray:
+    """ほぼ真っ黒で、点のような星がまばらにあるだけの宇宙(縮小すると消えやすい)。"""
+    rng = np.random.default_rng(seed)
+    img = np.zeros((h, w, 3), np.uint8)
+    xs, ys = rng.integers(0, w, n), rng.integers(0, h, n)
+    br = (0.4 + 0.6 * rng.random(n)) * 255
+    for x, y, b in zip(xs, ys, br):
+        img[y, x] = int(b)
+        if b > 230:
+            cv2.circle(img, (int(x), int(y)), 1, (int(b),) * 3, -1)
+    return img
+
+
+def build_hard_fixture(path: Path) -> dict:
+    """見落としやすい切替の正解つき動画(1280x720): 遅いディゾルブ・ホイップパン・
+    白を挟む切替・まばらな星空どうしのカット。"""
+    w, h = 1280, 720
+    tex = [warp(texture(40 + i, 1600, 900), 1.0, 0, 0, w, h) for i in range(5)]
+    frames, cuts, shots = [], [], []
+
+    def hold(img, n):
+        s = len(frames)
+        frames.extend([img] * n)
+        shots.append((s, len(frames)))
+
+    hold(tex[0], 45)
+    d0 = len(frames)
+    for i in range(36):                      # 1.2秒のディゾルブ
+        a = (i + 1) / 37
+        frames.append(((1 - a) * tex[0].astype(np.float32) + a * tex[1].astype(np.float32)).astype(np.uint8))
+    dissolve = (d0, len(frames))
+    hold(tex[1], 45)
+    for i in range(8):                       # ホイップパン(横に強くブレながら流れる)
+        shifted = np.roll(tex[1], -(i + 1) * 90, axis=1)
+        frames.append(cv2.blur(shifted, (121, 1)))
+    cuts.append(len(frames))
+    hold(tex[2], 45)
+    frames.extend([np.full((h, w, 3), 250, np.uint8)] * 4)   # 白を挟む切替
+    cuts.append(len(frames))
+    hold(tex[3], 45)
+    cuts.append(len(frames))
+    s1 = sparse_stars(7, int(w * 1.3), int(h * 1.3))
+    s = len(frames)
+    for i in range(60):
+        frames.append(warp(s1, 1.0 + 0.05 * i / 59, 0, 0, w, h))
+    shots.append((s, len(frames)))
+    cuts.append(len(frames))
+    s2 = sparse_stars(8, int(w * 1.3), int(h * 1.3))
+    s = len(frames)
+    for i in range(60):
+        frames.append(warp(s2, 1.0, 0.03 * i / 59, 0, w, h))
+    shots.append((s, len(frames)))
+    cuts.append(len(frames))
+    hold(tex[4], 45)
+    proc = subprocess.Popen(
+        ["ffmpeg", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{w}x{h}",
+         "-r", str(FPS), "-i", "-", "-c:v", "libx264", "-crf", "16", "-pix_fmt", "yuv420p",
+         str(path)], stdin=subprocess.PIPE)
+    for fr in frames:
+        proc.stdin.write(np.ascontiguousarray(fr).tobytes())
+    proc.stdin.close()
+    if proc.wait() != 0:
+        raise RuntimeError("hard fixture encode failed")
+    return {"n_frames": len(frames), "dissolve": dissolve, "cuts": cuts, "n_shots": 7}

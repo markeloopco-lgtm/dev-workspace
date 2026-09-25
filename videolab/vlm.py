@@ -34,7 +34,8 @@ ANNOTATE_WARNING = """\
 【確認】annotate は参考動画の代表フレーム画像を Gemini API に送信します。
   無料枠では、送った内容が Google の製品改善に使われ、人が読むこともあります。
   他人の動画のフレームを第三者に送ることになる点を理解した上で実行してください。
-  (送らずに済ませるなら、Claude Code に contact_sheet.jpg を見せて分類を頼む方法もあります)"""
+  (Geminiを使わない方法として、Claude Code に contact_sheet.jpg を見せて分類を頼むこともできます。
+   ただしその場合も画像は Anthropic に送信されます)"""
 
 ANNOTATE_PROMPT = """あなたは映像編集の専門家です。YouTubeの科学解説動画の各ショットの代表フレームを{n}枚渡します。
 画像は渡した順に shot番号 {indices} に対応します。各画像について日本語で分析し、
@@ -65,11 +66,25 @@ WATCH_PROMPT = """この動画(日本語の科学解説動画)を映像編集の
 
 
 def load_env(path: Path = Path(".env")) -> None:
-    """作業フォルダの .env(KEY=VALUE形式)を環境変数に読み込む(既存の値は上書きしない)。"""
+    """作業フォルダの .env(KEY=VALUE形式)を環境変数に読み込む(既存の値は上書きしない)。
+
+    Windowsのメモ帳・PowerShell 5.1 が付けがちなBOMやUTF-16、Shift_JISでも読めるようにする。
+    メモ帳が勝手に付けた .env.txt も読む(警告を出す)。
+    """
     if not path.exists():
-        return
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
+        alt = path.with_name(path.name + ".txt")
+        if not alt.exists():
+            return
+        print(f"  注意: {alt} を読みました。ファイル名を .env に変えることをおすすめします", flush=True)
+        path = alt
+    raw = path.read_bytes()
+    enc = "utf-16" if raw[:2] in (b"\xff\xfe", b"\xfe\xff") else "utf-8-sig"
+    try:
+        text = raw.decode(enc)
+    except UnicodeDecodeError:
+        text = raw.decode("cp932", errors="replace")
+    for line in text.splitlines():
+        line = line.strip().lstrip("\ufeff")
         if not line or line.startswith("#") or "=" not in line:
             continue
         k, v = line.split("=", 1)
@@ -119,6 +134,13 @@ def generate(parts: list, model: str = None, retries: int = 5, timeout: float = 
             elif e.code == 429:
                 hint = "\n  無料枠の回数制限です。時間をおくか、GEMINI_MODEL=gemini-flash-lite-latest を試してください"
             raise RuntimeError(f"Gemini APIエラー {e.code}: {msg}{hint}") from e
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
+            if attempt < retries - 1:
+                print(f"  Geminiに接続できません。{delay:.0f}秒後に再試行します", flush=True)
+                time.sleep(delay)
+                delay *= 2
+                continue
+            raise RuntimeError(f"Geminiに接続できません（ネット接続・プロキシ・ファイアウォールを確認）: {e}") from e
     raise RuntimeError("Gemini APIの再試行回数を超えました")
 
 

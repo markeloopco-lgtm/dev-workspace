@@ -3,8 +3,9 @@
 
 よく使う流れ(詳しくは docs/06, docs/07):
   python scripts/vlab.py doctor                          # 環境チェック
-  python scripts/vlab.py watch https://www.youtube.com/watch?v=XXXX   # ダウンロード不要の分析
-  python scripts/vlab.py fetch https://www.youtube.com/watch?v=XXXX   # ※規約上の注意あり
+  python scripts/vlab.py watch "https://www.youtube.com/watch?v=XXXX"   # ダウンロード不要の分析
+  python scripts/vlab.py fetch "https://www.youtube.com/watch?v=XXXX"   # ※規約上の注意あり
+  (URLは必ず "..." で囲む。& を含むURLはPowerShellがエラーにする)
   python scripts/vlab.py analyze refs/XXXX.mp4           # → analysis/XXXX/report.html
   python scripts/vlab.py purge analysis/XXXX --video refs/XXXX.mp4    # 分析後に複製物を削除
   python scripts/vlab.py aggregate analysis/A analysis/B analysis/C -o configs/style_profile.yaml
@@ -12,6 +13,8 @@
 """
 
 import argparse
+import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -130,7 +133,9 @@ def cmd_voices(a):
 
 def cmd_new_episode(a):
     tpl = Path(__file__).resolve().parent.parent / "episodes" / "_template.yaml"
-    text = tpl.read_text(encoding="utf-8").replace("{{TITLE}}", a.title)
+    # タイトルに " や \ があってもYAMLが壊れないようエスケープする
+    text = tpl.read_text(encoding="utf-8").replace(
+        "{{TITLE}}", json.dumps(a.title, ensure_ascii=False)[1:-1])
     out = Path(a.out)
     if out.exists() and not a.force:
         sys.exit(f"既にあります: {out} (上書きするなら --force)")
@@ -149,7 +154,7 @@ def cmd_produce(a):
         out_dir = Path("analysis") / f"_mine_{video.stem}"
         print("\n[採点] 完成動画を同じ物差しで解析します")
         pipeline.run_analysis(video, out_dir, subs=res["srt"])
-        style = a.style or "configs/style_profile.yaml"
+        style = res.get("style") or a.style or "configs/style_profile.yaml"
         r = profile.compare(profile.load_profile(style), profile.load_profile(out_dir))
         md = profile.compare_markdown(r, str(style), str(video))
         (out_dir / "gap_report.md").write_text(md, encoding="utf-8")
@@ -266,8 +271,11 @@ def main(argv=None):
     except KeyboardInterrupt:
         print("\n中断しました")
         return 130
-    except (FileNotFoundError, ValueError, RuntimeError) as e:
+    except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as e:
         print(f"\nエラー: {e}", file=sys.stderr)
+        if isinstance(e, PermissionError):
+            print("  ファイルが他のアプリ(動画プレーヤー等)で開かれていないか確認してください",
+                  file=sys.stderr)
         return 1
     return rc or 0
 

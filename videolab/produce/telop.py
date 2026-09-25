@@ -1,5 +1,6 @@
 """テロップ(字幕)とタイトルの描画。PILで縁取り文字をRGBA画像にしてキャッシュする。"""
 
+import math
 import os
 import re
 from pathlib import Path
@@ -114,13 +115,23 @@ class TextRenderer:
         st = self.style
         key = (text, color)
         if key not in self._cache:
-            size = max(10, int(st["size"] * self.h))
-            font = ImageFont.truetype(self.font_path, size)
-            stroke = max(1, int(round(st["outline_width"] * size)))
+            # 文字の大きさは min(幅, 高さ) 基準(縦動画でも大きくなりすぎない)。
+            # 2行に折り返しても画面に収まらなければ、収まるまで少しずつ小さくする
+            size = max(10, int(st["size"] * min(self.h, self.w * 9 / 16)))
+            max_w = self.w * 0.92
             probe = ImageDraw.Draw(Image.new("RGBA", (8, 8)))
-            text2 = wrap_two_lines(text, font, self.w * 0.92, probe)
+            while True:
+                font = ImageFont.truetype(self.font_path, size)
+                stroke = max(1, int(round(st["outline_width"] * size)))
+                text2 = wrap_two_lines(text, font, max_w, probe)
+                widest = max(probe.textlength(ln, font=font) for ln in text2.split("\n")) + 2 * stroke
+                if widest <= max_w or size <= 10:
+                    break
+                size = max(10, int(size * 0.92))
             bbox = probe.multiline_textbbox((0, 0), text2, font=font, stroke_width=stroke,
                                             align="center", spacing=int(size * 0.2))
+            # Pillowは折り返し時に小数の座標を返すので整数に丸める(Image.newは整数しか受けない)
+            bbox = (math.floor(bbox[0]), math.floor(bbox[1]), math.ceil(bbox[2]), math.ceil(bbox[3]))
             tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
             pad = stroke + 2
             band = st.get("band")

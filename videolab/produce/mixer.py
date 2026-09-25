@@ -78,6 +78,37 @@ def _envelope(active: np.ndarray, sr: int, attack: float, release: float) -> np.
     return np.repeat(out, step)[: len(active)]
 
 
+def _trim_quiet(y: np.ndarray, thr_db: float = -45.0) -> np.ndarray:
+    """曲の頭と終わりの無音(フェードの消え際)を切る。ループのつなぎ目で音が途切れないように。"""
+    env = np.abs(y).max(axis=1)
+    peak = env.max() if len(env) else 0.0
+    if peak <= 0:
+        return y
+    idx = np.where(env > peak * 10 ** (thr_db / 20))[0]
+    return y[idx[0]:idx[-1] + 1] if len(idx) else y
+
+
+def loop_to(y: np.ndarray, n: int, xf_s: float = 2.0, sr: int = SR) -> np.ndarray:
+    """BGMを長さnまでループする。つなぎ目は等パワーのクロスフェード(ブツ切れ・無音を防ぐ)。"""
+    if len(y) >= n:
+        return y[:n].copy()
+    y = _trim_quiet(y)
+    xf = max(1, min(int(xf_s * sr), len(y) // 4))
+    th = np.linspace(0, np.pi / 2, xf, dtype=np.float32)[:, None]
+    fade_in, fade_out = np.sin(th), np.cos(th)
+    out = np.zeros((n + len(y), y.shape[1]), np.float32)
+    pos, k = 0, 0
+    while pos < n:
+        seg = y.copy()
+        if k:
+            seg[:xf] *= fade_in
+        seg[-xf:] *= fade_out
+        out[pos:pos + len(y)] += seg
+        pos += len(y) - xf
+        k += 1
+    return out[:n]
+
+
 def mix(plan, style: dict, out_wav: Path, duck_db: float = 4.0) -> dict:
     n = int(math.ceil(plan.duration * SR)) + SR // 10
     speech = np.zeros((n, 2), np.float32)
@@ -94,16 +125,17 @@ def mix(plan, style: dict, out_wav: Path, duck_db: float = 4.0) -> dict:
     bgm_rel = -18.0 if bgm_rel is None or bgm_rel <= -50 else float(bgm_rel)
     music = np.zeros((n, 2), np.float32)
     duck = _envelope(active, SR, 0.12, 0.45)
+    warnings = []
     for bg in plan.bgm:
         y = ff.read_audio(bg["file"], sr=SR, channels=2)
         if len(y) == 0:
+            warnings.append(f"BGMの音声を読めませんでした(無視します): {bg['file']}")
             continue
         a, b = int(bg["start"] * SR), min(n, int(bg["end"] * SR))
         seg_len = b - a
         if seg_len <= 0:
             continue
-        reps = int(math.ceil(seg_len / len(y)))
-        track = np.tile(y, (reps, 1))[:seg_len]
+        track = loop_to(y, seg_len)
         fade = min(int(1.5 * SR), seg_len // 3)
         ramp = np.linspace(0, 1, fade, dtype=np.float32)[:, None]
         track[:fade] *= ramp
@@ -118,14 +150,17 @@ def mix(plan, style: dict, out_wav: Path, duck_db: float = 4.0) -> dict:
     for se in plan.se:
         y = ff.read_audio(se["file"], sr=SR, channels=2)
         if len(y) == 0:
+            warnings.append(f"効果音の音声を読めませんでした(無視します): {se['file']}")
             continue
         a = int(se["t"] * SR)
-        b = min(n, a + len(y))
+        off = max(0, -a)                 # 動画の開始より前に始まる効果音は頭を切る
+        a = max(0, a)
+        b = min(n, a + len(y) - off)
         if b <= a:
             continue
         rel = float(se["volume_db"]) if se.get("volume_db") is not None else -4.0
         L_e = loudness(y) or -20.0
-        effects[a:b] += y[: b - a] * 10 ** ((L_speech + rel - L_e) / 20)
+        effects[a:b] += y[off:off + b - a] * 10 ** ((L_speech + rel - L_e) / 20)
 
     out = speech + music + effects
     target = style.get("audio", {}).get("lufs_integrated")
@@ -137,7 +172,9 @@ def mix(plan, style: dict, out_wav: Path, duck_db: float = 4.0) -> dict:
     out_wav = Path(out_wav)
     out_wav.parent.mkdir(parents=True, exist_ok=True)
     sf.write(str(out_wav), out, SR, subtype="PCM_24")
-    return {"speech_lufs": round(L_speech, 2), "final_lufs": _r(loudness(out)),
+    for wmsg in warnings:
+        print(f"      警告: {wmsg}", flush=True)
+    return {"speech_lufs": round(L_speech, 2), "final_lufs": _r(loudness(out)), "warnings": warnings,
             "target_lufs": target, "bgm_rel_db": bgm_rel}
 
 

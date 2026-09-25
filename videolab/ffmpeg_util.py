@@ -10,16 +10,36 @@ import os
 import re
 import shutil
 import subprocess
+import sys
+import tempfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import numpy as np
 
-INSTALL_HINT = (
-    "ffmpegが見つかりません。Windowsなら PowerShell で\n"
-    "  winget install --id Gyan.FFmpeg -e\n"
-    "を実行してPowerShellを開き直すか、 pip install imageio-ffmpeg を実行してください。"
-)
+
+def pip_cmd(args: str) -> str:
+    """今動いているPython(= .venv-video)に入れるための pip コマンド文字列。
+
+    手順書は仮想環境を有効化せず .venv-video\\Scripts\\python.exe を直接使うので、
+    素の `pip install` だと別のPythonに入ってしまう。
+    """
+    exe = sys.executable
+    try:
+        rel = os.path.relpath(exe)
+        if not rel.startswith(".."):
+            exe = rel
+    except ValueError:          # Windowsで別ドライブ
+        pass
+    if " " in exe:
+        exe = f'& "{exe}"' if os.name == "nt" else f'"{exe}"'
+    return f"{exe} -m pip install {args}"
+
+
+def _install_hint() -> str:
+    return ("ffmpegが見つかりません。Windowsなら PowerShell で\n"
+            "  winget install -e --id Gyan.FFmpeg\n"
+            f"を実行してPowerShellを開き直すか、 {pip_cmd('imageio-ffmpeg')} を実行してください。")
 
 
 def find_ffmpeg() -> str:
@@ -32,7 +52,7 @@ def find_ffmpeg() -> str:
         return imageio_ffmpeg.get_ffmpeg_exe()
     except Exception:
         pass
-    raise FileNotFoundError(INSTALL_HINT)
+    raise FileNotFoundError(_install_hint())
 
 
 def find_ffprobe():
@@ -80,11 +100,13 @@ def probe(path) -> VideoInfo:
         raise FileNotFoundError(path)
     ffprobe = find_ffprobe()
     if ffprobe:
-        out = subprocess.run(
+        res = subprocess.run(
             [ffprobe, "-v", "error", "-show_streams", "-show_format", "-of", "json", path],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
-        ).stdout
-        data = json.loads(out)
+            capture_output=True, text=True, encoding="utf-8", errors="replace")
+        if res.returncode != 0 or not res.stdout.strip():
+            raise ValueError(f"動画を読み込めません(壊れているか、ダウンロード途中の可能性): {path}\n"
+                             f"{(res.stderr or '').strip()[-500:]}")
+        data = json.loads(res.stdout)
         v = next((s for s in data["streams"] if s.get("codec_type") == "video"), None)
         a = next((s for s in data["streams"] if s.get("codec_type") == "audio"), None)
         if v is None:
@@ -97,7 +119,7 @@ def probe(path) -> VideoInfo:
         for sd in v.get("side_data_list", []) or []:
             if "rotation" in sd:
                 rot = abs(int(float(sd["rotation"])))
-        if rot in (90, 270):
+        if rot % 180 == 90:
             width, height = height, width
         return VideoInfo(path, width, height, fps, duration, int(round(duration * fps)),
                          a is not None, v.get("codec_name", "?"),
@@ -114,7 +136,12 @@ def probe(path) -> VideoInfo:
         raise ValueError(f"映像ストリームを解析できません: {path}")
     am = re.search(r"Stream #.*?Audio:\s*(\w+)", err)
     fps = float(vm[4])
-    return VideoInfo(path, int(vm[2]), int(vm[3]), fps, duration, int(round(duration * fps)),
+    w, h = int(vm[2]), int(vm[3])
+    rm = re.search(r"rotation of (-?\d+(?:\.\d+)?) degrees", err) or \
+        re.search(r"rotate\s*:\s*(-?\d+)", err)
+    if rm and abs(int(round(float(rm[1])))) % 180 == 90:
+        w, h = h, w       # 縦向きのスマホ動画など(ffmpegは自動で回転してから出力する)
+    return VideoInfo(path, w, h, fps, duration, int(round(duration * fps)),
                      am is not None, vm[1], am[1] if am else "")
 
 
@@ -139,8 +166,9 @@ def iter_frames(path, width: int, height: int, start: float = None, duration: fl
     cmd += ["-an", "-sn", "-vf", f"scale={width}:{height}:flags=area",
             "-fps_mode", "passthrough", "-f", "rawvideo", "-pix_fmt", pix_fmt, "-"]
     frame_bytes = width * height * channels
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            bufsize=frame_bytes * 4)
+    # stderrはパイプにせず一時ファイルへ(壊れた動画でエラーが大量に出てもffmpegが止まらない)
+    errf = tempfile.TemporaryFile()
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=errf, bufsize=frame_bytes * 4)
     finished = False
     try:
         while True:
@@ -154,9 +182,10 @@ def iter_frames(path, width: int, height: int, start: float = None, duration: fl
         if not finished:  # 呼び出し側が途中で読むのをやめた
             proc.kill()
         proc.stdout.close()
-        err = proc.stderr.read().decode("utf-8", "replace")
-        proc.stderr.close()
         rc = proc.wait()
+        errf.seek(0)
+        err = errf.read().decode("utf-8", "replace")
+        errf.close()
     if rc != 0:
         raise RuntimeError(f"ffmpegのデコードに失敗しました ({path}):\n{err[-1500:]}")
 

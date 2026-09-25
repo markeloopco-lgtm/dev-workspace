@@ -83,12 +83,12 @@ def run_analysis(video, out_dir=None, subs=None, whisper: str = None, step: int 
         say(f"      字幕を使用: {subs.name} ({len(transcript)}行)")
     elif whisper:
         say(f"      faster-whisper({whisper})で文字起こし中(CPUだと動画の長さの0.3〜1倍程度かかります)")
-        transcript = audio.transcribe_whisper(video, whisper)
+        transcript = audio.transcribe_whisper(video, whisper, max_seconds=max_seconds)
+    if max_seconds and transcript:
+        transcript = [s for s in transcript if s["start"] < max_seconds]
     if transcript:
         (out_dir / "transcript.json").write_text(
             json.dumps(transcript, ensure_ascii=False, indent=1), encoding="utf-8")
-    if max_seconds and transcript:
-        transcript = [s for s in transcript if s["start"] < max_seconds]
     a_info = info
     if max_seconds:
         a_info = ff.VideoInfo(**{**info.to_dict(), "duration": min(info.duration, max_seconds)})
@@ -113,6 +113,9 @@ def run_analysis(video, out_dir=None, subs=None, whisper: str = None, step: int 
 def _audio_trimmed(video, info, transcript, max_seconds):
     """--max-seconds 指定時は先頭だけを一時ファイルに切り出して音声解析する。"""
     import tempfile
+
+    if not info.has_audio:
+        return audio.analyze_audio(video, info, transcript)   # {"has_audio": False}
 
     with tempfile.TemporaryDirectory() as td:
         clip = Path(td) / "head.mka"
@@ -150,17 +153,22 @@ def rebuild_profile(out_dir) -> Path:
     return out_dir / "profile.json"
 
 
-PURGE_TARGETS = ("keyframes", "contact_sheet.jpg", "transcript.json", "report.html",
+PURGE_TARGETS = ("keyframes", "filmstrips", "contact_sheet.jpg", "transcript.json", "report.html",
                  "vlm.json", "gemini_watch.json", "gemini_watch.md")
 
 
 def purge(out_dir, video=None) -> list:
     """参考動画の複製にあたるもの(キーフレーム・一覧画像・文字起こし・レポート)と
     元動画・字幕を削除し、数値データ(profile.json, frames/shots/audio)だけを残す。"""
+    import glob
     import shutil
 
     out_dir = Path(out_dir)
     removed = []
+    # 旧版で analysis/ 直下に保存したコマ送り画像も消す
+    for p in out_dir.parent.glob(glob.escape(out_dir.name) + "_filmstrip_*"):
+        p.unlink()
+        removed.append(p)
     for name in PURGE_TARGETS:
         p = out_dir / name
         if p.is_dir():
@@ -177,7 +185,9 @@ def purge(out_dir, video=None) -> list:
         aud_f.write_text(json.dumps(aud, ensure_ascii=False, indent=1), encoding="utf-8")
     if video:
         video = Path(video)
-        for p in [video, *video.parent.glob(video.stem + ".*")]:
+        siblings = [q for q in video.parent.iterdir() if q.name.startswith(video.stem + ".")] \
+            if video.parent.exists() else []     # glob は [ ] を特殊文字と解釈するので使わない
+        for p in [video, *siblings]:
             if p.exists() and p.suffix.lower() in (".mp4", ".mkv", ".webm", ".m4a", ".vtt",
                                                      ".srt", ".json", ".part", ".jpg", ".webp"):
                 p.unlink()

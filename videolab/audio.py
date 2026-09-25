@@ -32,38 +32,60 @@ def _ts(s: str) -> float:
     return parts[0] * 3600 + parts[1] * 60 + parts[2]
 
 
+TS_LINE = re.compile(r"(\d{1,2}:\d{2}(?::\d{2})?[.,]\d{3})\s*-->\s*(\d{1,2}:\d{2}(?::\d{2})?[.,]\d{3})")
+WORD_TS = re.compile(r"<(\d{1,2}:\d{2}(?::\d{2})?[.,]\d{3})>")
+NON_SPEECH = re.compile(r"^(?:[\[［(（][^\]］)）]*[\]］)）]\s*)+$")   # [音楽] [拍手] (笑) など
+
+
 def parse_subtitles(path) -> list:
-    """SRT/VTTを [{start, end, text}] にする。YouTube自動字幕の「流れる重複行」も除去する。"""
+    """SRT/VTTを [{start, end, text}] にする。
+
+    YouTube自動字幕の特徴に対応する:
+      - 「前の行 + 新しい行」の2行構成で流れる → 前のcueと同じ1行目は捨てる
+      - 表示は次の行が出るまで伸びる → 単語ごとの時刻タグ(<00:00:01.200>)から発話の終わりを推定
+      - [音楽] [拍手] だけのcueは発話ではない
+    手動字幕の2行cueは全行をつなげて使う。
+    """
     raw = Path(path).read_text(encoding="utf-8-sig", errors="replace")
-    cue_re = re.compile(
-        r"(\d{1,2}:\d{2}(?::\d{2})?[.,]\d{3})\s*-->\s*(\d{1,2}:\d{2}(?::\d{2})?[.,]\d{3})[^\n]*\n(.*?)(?:\n\s*\n|\Z)",
-        re.S)
+    raw = raw.replace("\r\n", "\n").replace("\r", "\n")
     cues = []
-    for m in cue_re.finditer(raw.replace("\r\n", "\n")):
+    for block in re.split(r"\n{2,}", raw):        # 空行でcueを区切る(空のcueが次を飲み込まない)
+        lines = block.split("\n")
+        idx = next((i for i, ln in enumerate(lines) if TS_LINE.search(ln)), None)
+        if idx is None:                            # WEBVTTヘッダ・NOTEなど
+            continue
+        m = TS_LINE.search(lines[idx])
         start, end = _ts(m[1]), _ts(m[2])
-        lines = []
-        for line in m[3].split("\n"):
-            line = re.sub(r"<[^>]+>", "", line)       # <00:00:01.000><c> などのタグ
-            line = html.unescape(line).strip()
-            if line and not line.isdigit():
-                lines.append(line)
-        if lines and end > start:
-            cues.append({"start": start, "end": end, "lines": lines})
+        text_lines, word_end = [], None
+        for line in lines[idx + 1:]:
+            tags = WORD_TS.findall(line)
+            if tags:   # 単語ごとの時刻 → 最後の単語の開始 + 文字数からの推定長
+                last_word = re.sub(r"<[^>]+>", "", re.split(r"<\d[^>]*>", line)[-1]).strip()
+                word_end = _ts(tags[-1]) + max(0.3, 0.13 * len(last_word))
+            clean = html.unescape(re.sub(r"<[^>]+>", "", line)).strip()
+            if clean:
+                text_lines.append(clean)
+        if text_lines and end > start:
+            cues.append({"start": start, "end": end, "lines": text_lines, "word_end": word_end})
     out = []
     prev_last = None
     for c in cues:
-        if c["end"] - c["start"] < 0.05:           # 自動字幕の10msつなぎcue
-            continue
-        # 自動字幕は「前の行 + 新しい行」の2行構成で流れるので、新しい行だけ採る
-        new_lines = [ln for ln in c["lines"] if ln != prev_last]
-        text = "".join(new_lines[-1:] if len(c["lines"]) > 1 else new_lines)
+        ls = c["lines"]
+        short = c["end"] - c["start"] < 0.05       # 自動字幕の10msつなぎcue
+        if len(ls) > 1 and ls[0] == prev_last:     # 流れる字幕: 持ち越しの1行目を捨てる
+            ls = ls[1:]
         prev_last = c["lines"][-1]
-        if not text:
+        if short:
             continue
+        text = "".join(ls)
+        if not text or NON_SPEECH.match(text):
+            continue
+        end = min(c["end"], c["word_end"]) if c["word_end"] else c["end"]
+        end = max(end, c["start"] + 0.2)
         if out and out[-1]["text"] == text:
-            out[-1]["end"] = c["end"]
+            out[-1]["end"] = round(max(out[-1]["end"], end), 3)
             continue
-        out.append({"start": round(c["start"], 3), "end": round(c["end"], 3), "text": text})
+        out.append({"start": round(c["start"], 3), "end": round(end, 3), "text": text})
     # 自動字幕は次のcue開始まで表示が伸びるため、重なりを詰める
     for a, b in zip(out, out[1:]):
         if a["end"] > b["start"]:
@@ -71,17 +93,26 @@ def parse_subtitles(path) -> list:
     return out
 
 
-def transcribe_whisper(video_path, model_size: str = "small", out_json: Path = None) -> list:
-    """faster-whisper(CPU・int8)で日本語文字起こし。未インストールなら例外。"""
+def transcribe_whisper(video_path, model_size: str = "small", out_json: Path = None,
+                       max_seconds: float = None) -> list:
+    """faster-whisper(CPU・int8)で日本語文字起こし。未インストールなら例外。
+
+    max_seconds を指定すると、その時刻を過ぎた所で打ち切る(残りは文字起こししない)。
+    """
     try:
         from faster_whisper import WhisperModel
     except ImportError as e:
-        raise RuntimeError("faster-whisper が未インストールです: pip install faster-whisper") from e
+        raise RuntimeError("faster-whisper が未インストールです: "
+                           + ff.pip_cmd("faster-whisper")) from e
     model = WhisperModel(model_size, device="cpu", compute_type="int8")
     segments, _ = model.transcribe(str(video_path), language="ja", vad_filter=True,
                                    beam_size=1)
-    out = [{"start": round(s.start, 3), "end": round(s.end, 3), "text": s.text.strip()}
-           for s in segments]
+    out = []
+    for sgm in segments:           # 逐次生成されるので途中で止めれば残りは処理されない
+        if max_seconds and sgm.start >= max_seconds:
+            break
+        out.append({"start": round(sgm.start, 3), "end": round(sgm.end, 3),
+                    "text": sgm.text.strip()})
     if out_json:
         out_json.write_text(json.dumps(out, ensure_ascii=False, indent=1), encoding="utf-8")
     return out
@@ -130,14 +161,35 @@ def energy_vad(y: np.ndarray, sr: int = VAD_SR, hop_s: float = 0.02) -> list:
 # ---------------------------------------------------------------- 強調音・オンセット
 
 def onset_times(y: np.ndarray, sr: int = VAD_SR) -> np.ndarray:
-    """スペクトルフラックスによる音の立ち上がり時刻(秒)。ナレーションの音節も含む。"""
+    """スペクトルフラックスによる音の立ち上がり時刻(秒)。ナレーションの音節も含む。
+
+    長い動画でもメモリを食わないよう、STFTはブロックごとに計算して1次元のフラックスだけ残す
+    (signal.stft(boundary="zeros", padded=True) と同じフレーム配置・同じ結果)。
+    """
     if len(y) < sr:
         return np.zeros(0)
-    f, t, z = signal.stft(y, fs=sr, nperseg=1024, noverlap=1024 - 256)
-    mag = np.log1p(40 * np.abs(z))
-    flux = np.maximum(0, np.diff(mag, axis=1)).sum(axis=0)
+    nperseg, hop, block = 1024, 256, 8192
+    pad = nperseg // 2
+    x = np.concatenate([np.zeros(pad, np.float32), np.asarray(y, np.float32),
+                        np.zeros(pad, np.float32)])
+    x = np.concatenate([x, np.zeros((-(len(x) - nperseg) % hop) % nperseg, np.float32)])
+    n = (len(x) - nperseg) // hop + 1
+    win = signal.get_window("hann", nperseg).astype(np.float32)
+    win /= win.sum()
+    frames = np.lib.stride_tricks.sliding_window_view(x, nperseg)[::hop]
+    flux = np.empty(n - 1, np.float32)
+    prev = None
+    for s0 in range(0, n, block):
+        mag = np.log1p(40 * np.abs(np.fft.rfft(frames[s0:s0 + block] * win, axis=1))).T
+        if prev is not None:
+            mag = np.concatenate([prev, mag], axis=1)
+        d = np.maximum(0, np.diff(mag, axis=1)).sum(axis=0)
+        o = s0 - 1 if prev is not None else 0
+        flux[o:o + len(d)] = d
+        prev = mag[:, -1:]
+    t = np.arange(n) * hop / sr
     flux = flux / (np.percentile(flux, 99) + 1e-9)
-    hop_t = t[1] - t[0]
+    hop_t = hop / sr
     w = max(3, int(0.5 / hop_t))
     base = signal.medfilt(flux, kernel_size=w | 1)
     peaks, _ = signal.find_peaks(flux, height=base + 0.15, distance=max(1, int(0.1 / hop_t)))

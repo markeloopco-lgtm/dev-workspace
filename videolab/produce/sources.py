@@ -103,13 +103,24 @@ def apply_camera(base: np.ndarray, cam: CameraMove, u: float, w: int, h: int) ->
     """base(出力より大きい原画)にカメラワークを適用して (h, w) を切り出す。サブピクセル補間。"""
     bh, bw = base.shape[:2]
     scale, ox, oy = cam.at(u)
-    # base中心を画面中心に置き、baseの「画面相当サイズ」は (w*margin) → 画面へ scale/margin 倍
-    margin = bw / w
-    s = scale / margin
+    # baseは既に (w*margin) px ある。拡大率1で「原画1px = 画面1px」とし、はみ出した余白(margin)で
+    # パン・構図ずらしを吸収する(ここで margin で割ると余白が消え、端に鏡像の帯が出る)
+    s = scale
     tx = w / 2 - s * bw / 2 + ox * w
     ty = h / 2 - s * bh / 2 + oy * h
     m = np.array([[s, 0, tx], [0, s, ty]], np.float32)
     return cv2.warpAffine(base, m, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT)
+
+
+def to_uint8(img: np.ndarray) -> np.ndarray:
+    """16bit・浮動小数の画像を8bitにそろえる(書き出しは rgb24 なので8bit以外は壊れる)。"""
+    if img.dtype == np.uint8:
+        return img
+    if img.dtype == np.uint16:
+        return (img >> 8).astype(np.uint8)
+    if img.dtype.kind == "f":
+        return (np.clip(img, 0.0, 1.0) * 255 + 0.5).astype(np.uint8)
+    return np.clip(img, 0, 255).astype(np.uint8)
 
 
 def load_image_rgb(path) -> np.ndarray:
@@ -117,15 +128,14 @@ def load_image_rgb(path) -> np.ndarray:
     img = cv2.imdecode(data, cv2.IMREAD_UNCHANGED)
     if img is None:
         raise ValueError(f"画像を読めません: {path}")
-    if img.ndim == 2:
-        img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
-    elif img.shape[2] == 4:
+    if img.ndim == 3 and img.shape[2] == 4:
+        img = to_uint8(img)            # 透過PNG: 黒背景に合成
         a = img[..., 3:4].astype(np.float32) / 255
         img = (img[..., :3].astype(np.float32) * a).astype(np.uint8)
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    else:
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    return img
+        return cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    # 透過なし: IMREAD_COLOR で読み直す(スマホ写真のEXIF回転を反映し、16bitも8bitにする)
+    img = cv2.imdecode(data, cv2.IMREAD_COLOR)
+    return cv2.cvtColor(to_uint8(img), cv2.COLOR_BGR2RGB)
 
 
 class ImageSource(FrameSource):
@@ -164,12 +174,19 @@ def _hex(c: str):
 class ColorSource(FrameSource):
     """単色または上下グラデーション(タイトルカード・説明用の下地)。"""
 
-    def __init__(self, n_frames: int, w: int, h: int, color="#101018", color2=None):
+    def __init__(self, n_frames: int, w: int, h: int, color="#101018", color2=None,
+                 label: str = None):
         self.n_frames = n_frames
         top = np.array(_hex(color), np.float32)
         bot = np.array(_hex(color2 or color), np.float32)
         g = np.linspace(0, 1, h, dtype=np.float32)[:, None, None]
         self.img = np.broadcast_to((top * (1 - g) + bot * g).astype(np.uint8), (h, w, 3)).copy()
+        if label:     # 下書きの「素材TODO」仮カード
+            from .telop import DEFAULT_TELOP, TextRenderer, blend, find_font
+            tr = TextRenderer(w, h, {**DEFAULT_TELOP, "size": 0.06, "y": 0.4,
+                                     "color": "#ffd24d"}, find_font())
+            arr, x, y = tr.render(label)
+            blend(self.img, arr, x, y)
 
     def frame(self, i):
         return self.img

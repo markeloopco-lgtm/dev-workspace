@@ -20,7 +20,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from .sources import FrameSource
+from .sources import FrameSource, to_uint8
 from .telop import TextRenderer, blend
 
 ANIMS = ("none", "float", "shake", "breathe")
@@ -32,6 +32,7 @@ def load_rgba(path) -> np.ndarray:
     img = cv2.imdecode(data, cv2.IMREAD_UNCHANGED)
     if img is None:
         raise ValueError(f"重ね画像を読めません: {path}")
+    img = to_uint8(img)       # 16bit PNG でも透明度を0〜255として扱えるように
     if img.ndim == 2:
         img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGRA)
     elif img.shape[2] == 3:

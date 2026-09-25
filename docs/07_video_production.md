@@ -10,7 +10,8 @@ docs/06 で作った目標スタイル（`configs/style_profile.yaml`）に合�
   ├─ ② カット割り         ナレーションの尺 × 目標のショット長・冒頭テンポ・遷移の比率
   ├─ ③ 映像              宇宙シーン(Blender 3DCG / 2D版) ・ 画像のズーム/パン ・ 動画素材
   ├─ ④ テロップ          目標の位置・縁取り。長い台詞は句読点・文節で分割
-  ├─ ⑤ 音               BGMは目標の音量差に自動調整＋台詞中は自動で下げる、-14 LUFSに正規化
+  ├─ ⑤ 音               BGMは目標の音量差に自動調整＋台詞中は自動で下げる、目標スタイルの
+  │                       ラウドネス(audio.lufs_integrated、初期値 -14 LUFS)に正規化
   ▼
 renders/xxx.mp4 ＋ 字幕(.ja.srt) ＋ クレジット(.credits.txt)
   │
@@ -29,6 +30,7 @@ docs/06 の Step 1（準備）が済んでいれば、そのまま動く。
 ```
 
 `renders\sample_moon_half.mp4` ができれば成功（仮音声・半分の解像度）。
+本番の出力は 1920x1080（台本の `resolution: [幅, 高さ]` で変更可）。
 宇宙シーンはBlenderが無ければ2D版で描かれる。
 
 ## Step 2: VOICEVOXで本物のナレーション（15分）
@@ -90,8 +92,10 @@ episodes/my_first.yaml に書いてください。
 書式は `episodes/README.md`。**あなたがやること**:
 
 - 台本の数字・主張を `sources:` の出典で確認する（解説動画の信頼はここで決まる）
-- 「素材TODO」の画像を用意して `assets\images\` に置く（入手先は `assets/README.md`）
-- 好きなBGM・効果音を `assets\bgm\` `assets\se\` に置いて台本に書く（規約とクレジットを確認）
+- 「素材TODO」の画像を用意して `assets\images\` に置く（入手先は `assets/README.md`）。
+  用意する前でも `--draft` なら黄色い「素材TODO」の仮カードで最後まで書き出せる（本番は素材が必要）
+- 好きなBGM・効果音を `assets\bgm\` `assets\se\` に置いて台本に書く（規約とクレジットを確認）。
+  BGMは動画より短ければ自動でループする（つなぎ目は2秒のクロスフェード）。「ループ版」の曲だと自然
 
 ## Step 5: 書き出しと採点、直す
 
@@ -130,4 +134,7 @@ episodes/my_first.yaml に書いてください。
 | `日本語フォントが見つかりません` | `assets\fonts\` に .ttf/.otf を置く（例: Noto Sans JP） |
 | `refs/ 内のファイルが指定されています` | 参考動画の素材は使えない仕様。自分の素材を `assets\` に置く |
 | 書き出しが遅い | `--draft` で確認 → 本番。NVIDIAのGPUなら `--encoder nvenc` でエンコードが速くなる |
+| `エンコードに失敗しました`（nvenc） | GPUドライバを更新するか `--encoder x264` に戻す |
+| `話者 '〇〇' が voices にありません` | 台詞の speaker の名前を voices に合わせる（打ち間違いで別の声になるのを防ぐチェック） |
+| `音声エンジンがエラーを返しました` | 話者IDがそのエンジンに無い。`vlab voices`（AivisSpeechは `--engine aivis`）で確認 |
 | Blenderでエラー | `--engine 2d` で回避し、エラー文をClaude Codeに見せる |

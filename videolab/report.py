@@ -28,9 +28,10 @@ MAX_POINTS = 2000       # タイムライン1段あたりの最大点数(ファ�
 VB_W = 1000             # タイムラインSVGの横座標(viewBox)。実際の幅には伸縮する
 YOUTUBE_LUFS = -14.0
 
-NOTICE = ("keyframes/ と contact_sheet.jpg は参考動画の複製です。個人の分析用に留め、"
-          "公開・再配布・制作素材への流用はしないでください"
-          "（著作権法30条の4の情報解析の範囲で利用）。")
+NOTICE = ("このレポート(台詞・字幕の文字を含む)と keyframes/・filmstrips/・contact_sheet.jpg・"
+          "transcript.json は参考動画の複製です。個人の分析用に留め、公開・再配布・制作素材への"
+          "流用はしないでください（著作権法30条の4の情報解析の範囲で利用）。人に見せる場合は "
+          "vlab purge の後に vlab report で作り直した、数値だけのレポートにしてください。")
 
 CAMERA_JA = {
     "static": "静止", "static_action": "静止(画面内に動き)", "zoom_in": "ズームイン",
@@ -988,7 +989,7 @@ def write_report(out_dir: Path) -> Path:
     meta = _load_json(out_dir / "meta.json")
     shots = _load_json(out_dir / "shots.json")
     shots = [s for s in shots if isinstance(s, dict)] if isinstance(shots, list) else []
-    # keyframes/ を消した(共有用にした)フォルダでも壊れた画像を出さない
+    # purge 後のフォルダでも壊れた画像を出さない
     shots = [s if not s.get("keyframe") or (out_dir / s["keyframe"]).exists() else {**s, "keyframe": None}
              for s in shots]
     frames = _load_frames(out_dir / "frames.csv")

@@ -9,10 +9,14 @@
 メインのGoogleアカウントのCookieは絶対に使わない。
 """
 
+import importlib.util
+import re
 import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+from .ffmpeg_util import pip_cmd
 
 NOTICE = """\
 【重要】YouTubeの利用規約は、許可の無い動画のダウンロードを禁止しています。
@@ -28,18 +32,28 @@ FORMAT_SORT = "vcodec:h264,res:720,acodec:m4a"
 FORMAT = "bv*[height<=720]+ba/b[height<=720]"
 
 
-def _ytdlp_cmd():
+_VIDEO_ID = re.compile(r"(?:[?&]v=|youtu\.be/|shorts/|live/|embed/)([A-Za-z0-9_-]{11})(?![A-Za-z0-9_-])")
+
+
+def single_video_url(url: str) -> str:
+    """1本の動画のURLに正規化する。チャンネル・再生リストのURLは一括取得になるので拒否。"""
+    m = _VIDEO_ID.search(url)
+    if not m:
+        raise RuntimeError("1本の動画のURL(https://www.youtube.com/watch?v=動画ID)を指定してください。\n"
+                           "  チャンネルや再生リストのURLは一括ダウンロードになるため受け付けません")
+    return f"https://www.youtube.com/watch?v={m.group(1)}"
+
+
+def ytdlp_cmd():
+    """仮想環境に入れた yt-dlp を優先する(PATH上の古いyt-dlpやdeno無しの版を避ける)。"""
+    if importlib.util.find_spec("yt_dlp") is not None:
+        return [sys.executable, "-m", "yt_dlp"]
     exe = shutil.which("yt-dlp")
     if exe:
         return [exe]
-    try:
-        import yt_dlp  # noqa: F401
-        return [sys.executable, "-m", "yt_dlp"]
-    except ImportError:
-        raise FileNotFoundError(
-            "yt-dlp が見つかりません。次のどちらかを実行してください:\n"
-            '  pip install -U "yt-dlp[default,deno]"\n'
-            "  winget install -e --id yt-dlp.yt-dlp")
+    raise FileNotFoundError(
+        "yt-dlp が見つかりません。次を実行してください:\n  "
+        + pip_cmd('-U "yt-dlp[default,deno]"'))
 
 
 def confirm(assume_yes: bool = False) -> bool:
@@ -55,14 +69,15 @@ def confirm(assume_yes: bool = False) -> bool:
 
 def fetch(url: str, out_dir: Path = Path("refs"), subs: bool = True, cookies_from: str = None,
           assume_yes: bool = False) -> Path:
+    url = single_video_url(url)          # 確認より先に検査(受け付けないURLで同意を求めない)
     if not confirm(assume_yes):
         raise RuntimeError("ダウンロードを中止しました(vlab watch <URL> ならダウンロード不要です)")
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    cmd = _ytdlp_cmd() + [
+    cmd = ytdlp_cmd() + [
         "-f", FORMAT, "-S", FORMAT_SORT, "--merge-output-format", "mp4",
         "--sleep-requests", "1", "--min-sleep-interval", "5", "--max-sleep-interval", "10",
-        "--write-info-json", "--no-playlist",
+        "--write-info-json", "--no-playlist", "--playlist-items", "1",
         "-o", str(out_dir / "%(id)s.%(ext)s"),     # 日本語ファイル名を避けてIDで保存
         "--print", "after_move:filepath",
     ]
@@ -82,7 +97,7 @@ def fetch(url: str, out_dir: Path = Path("refs"), subs: bool = True, cookies_fro
     res = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if res.returncode != 0:
         raise RuntimeError("yt-dlp が失敗しました:\n" + res.stderr[-2000:] +
-                           "\n  よくある原因: yt-dlpが古い(pip install -U \"yt-dlp[default,deno]\")、"
+                           "\n  よくある原因: yt-dlpが古い(" + pip_cmd('-U "yt-dlp[default,deno]"') + ")、"
                            "JavaScriptランタイム(deno)が無い、一時的なアクセス制限")
     lines = [ln.strip() for ln in res.stdout.splitlines() if ln.strip()]
     path = Path(lines[-1]) if lines else None

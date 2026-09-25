@@ -24,7 +24,7 @@ prompts/structure_analysis.md の「まとめ」の手順で configs/structure_t
 - `shots.json`（ショットの時刻・カメラワーク・テロップ率）
 - `profile.json`（数値の要約）
 - あれば `gemini_watch.md` / `vlm.json`（映像の意味の分析）
-- 必要なら `contact_sheet.jpg` を画像として見る
+- 必要なら `contact_sheet.jpg` を画像として見る（ユーザーには、画像・文字起こしがAnthropicに送信されることを伝える）
 
 `analysis/<動画ID>/structure.md` に次をまとめる:
 
