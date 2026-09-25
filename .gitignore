@@ -6,3 +6,5 @@ output/*
 !input/.gitkeep
 !output/.gitkeep
 *.psd
+# 動画分析の出力(他人の動画・フレーム・字幕を含むのでコミットしない)
+analysis/

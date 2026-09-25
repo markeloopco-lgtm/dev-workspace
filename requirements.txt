@@ -1,6 +1,11 @@
 # PSD正規化パイプライン用 (See-through本体の依存は含まない — docs/02参照)
 psd-tools>=1.9
 pytoshop>=1.2
+six             # pytoshopが内部でimportするのに依存に宣言していない(無いとtests/run_selftest.pyが失敗)
 numpy
 Pillow
 PyYAML
+
+# 参考動画のフレーム分析 (scripts/analyze_video.py — docs/06)
+imageio-ffmpeg  # ffmpeg本体を同梱(別途インストール不要)
+yt-dlp[default] # YouTube取得。別途 Node.js か Deno が必要

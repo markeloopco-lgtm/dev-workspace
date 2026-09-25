@@ -10,7 +10,7 @@
 - **完全無料方針**（有料サービスの提案は明示的に求められた時のみ）
 - Claude Pro/Maxサブスクリプション利用（API課金なし）
 
-## 現在の状態（2026-07-19時点）
+## 現在の状態（2026-09-25時点）
 
 ソフトウェア部分は完成・検証済み。残タスクは実機作業のみ:
 
@@ -21,6 +21,9 @@
 - [ ] Cubism Editor PROトライアルで1体目のマスターリグ作成（GUI作業。docs/03のチェックリストに沿ってユーザーを誘導）
 - [ ] Gemini APIキー・YouTube Data API v3キーの取得誘導 → .env設定
 - [ ] OBS設定（クロマキー）→ テスト配信
+- [ ] 参考チャンネル（投資うさぎ @toshiusagi、会話形式の投資解説）のフレーム分析 → 制作仕様書化（docs/06）。
+  分析ツールは完成・合成動画で検証済み。**実動画の取得が未実施**: クラウド環境はYouTubeがネットワーク設定で
+  遮断されているため、環境のNetwork access許可かPCでの実行が必要
 
 ## リポジトリ構成
 
@@ -29,7 +32,9 @@
 - `scripts/batch_decompose.py`: 一括処理（`--normalize-only` はローカルで使う）
 - `configs/layer_mapping.yaml`: See-through V3実タグ体系に較正済み（ソース調査で検証）
 - `configs/aituberkit.env.example`: AITuberKit用env（変数名は本家.env.exampleに対し検証済み）
+- `scripts/analyze_video.py`: 参考動画のフレーム分析（video / channel）。出力 `analysis/` はgit管理外
 - `tests/run_selftest.py`: 正規化のラウンドトリップ検証。**Pythonコード変更時は必ず実行**
+- `tests/run_video_selftest.py`: 動画分析の検出精度検証（合成動画）。**analyze_video.py変更時は必ず実行**
 
 ## 重要な技術的前提（再調査不要）
 
@@ -37,6 +42,9 @@
 - AITuberKitのLive2Dモデルは `public/live2d/<名前>/` 直下に .model3.json。Cubism Coreは手動DL必須
 - AITuberKitランタイムはCubism 3/4系。**Cubism 5新機能は使わない**でリグを作る
 - pytoshop書き出しPSDはunicode名に終端NULが付く既知問題 → normalize_psd.pyが除去済み
+- 動画分析の差分閾値（RGB差20・次フレームでも残る変化のみ）は合成動画で圧縮ノイズの誤検出0件を確認して決めた値。
+  下げるとキーフレーム前後の輪郭のちらつきを拾う
+- YouTube取得はyt-dlp + JSランタイム（Node.jsかDeno）が必要。PCで「ボット確認」が出たら `--cookies-from-browser`
 - ライセンス: AITuberKit非商用無料・**Live2D機能は現在商用不可**／SBV2はAGPL／声モデルはクレジット表記（docs/04の表参照）
 
 ## 作業方針
