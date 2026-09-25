@@ -15,7 +15,9 @@
     "auto"     Blenderが見つかればEEVEE、見つからなければ2d
 
 テンプレートとパラメータ(全て省略可。未知のパラメータ名はValueError)は TEMPLATES を参照。
-`python -m videolab.produce.space` で一覧を表示できる。
+  python -m videolab.produce.space                       一覧を表示
+  python -m videolab.produce.space preview planet preset=mars --size 1920x1080
+  python -m videolab.produce.space preview sun --camera zoom_in --seconds 4   (mp4)
 
 カメラワークの向きは解析側(analyze.classify_camera)と同じ定義:
   zoom_in = 中身が大きくなる / pan_right = 中身が左へ流れる(カメラが右へ)
@@ -45,7 +47,7 @@ PRESETS = {
     "earth": {
         "kind": "earth", "atmosphere": "#5ea4ff", "atm_strength": 1.0, "rings": False,
         "tilt": 23.4, "inclination": 12.0, "clouds": True, "night_lights": True,
-        "diameter_km": 12742,
+        "diameter_km": 12742, "longitude": None,
         "colors": {"ocean_deep": "#07214d", "ocean": "#12497e", "ocean_shallow": "#1f6f9e",
                    "land_low": "#3d6a2e", "land_forest": "#2a4d22", "land_high": "#6f6247",
                    "desert": "#c2a36b", "tundra": "#8d8a74", "ice": "#f1f5f8",
@@ -62,14 +64,23 @@ PRESETS = {
         "kind": "gas", "atmosphere": "#efdcb8", "atm_strength": 0.3, "rings": False,
         "tilt": 3.1, "inclination": 6.0, "clouds": False, "night_lights": False,
         "diameter_km": 139820, "storm": True, "longitude": 28.0,
-        "colors": {"zone": "#ece2cc", "zone2": "#dcc8a4", "belt": "#b87c52",
-                   "belt_dark": "#8b5538", "pole": "#8d8676", "storm": "#c4583a",
+        # 帯: (南端の緯度, 色キー) を北から順に
+        "bands": [(66, "pole"), (58, "zone2"), (53, "belt"), (48, "zone2"), (43, "belt"),
+                  (37, "zone"), (31, "belt"), (26, "zone2"), (20, "zone"), (15, "belt_dark"),
+                  (8, "belt"), (-5, "zone2"), (-11, "belt"), (-19, "belt_dark"), (-27, "zone"),
+                  (-33, "belt"), (-38, "zone2"), (-44, "belt"), (-50, "zone2"), (-57, "belt"),
+                  (-66, "zone2"), (-90, "pole")],
+        "colors": {"zone": "#ebe1cd", "zone2": "#dcc7a3", "belt": "#bb916c",
+                   "belt_dark": "#9a6d4f", "pole": "#9c9486", "storm": "#c8694a",
                    "oval": "#f6f1e8"},
     },
     "saturn": {
         "kind": "gas", "atmosphere": "#f0dcae", "atm_strength": 0.25, "rings": True,
         "tilt": 26.7, "inclination": 24.0, "clouds": False, "night_lights": False,
         "diameter_km": 116460, "storm": False,
+        "bands": [(70, "pole"), (55, "zone2"), (45, "belt"), (38, "zone"), (30, "belt_dark"),
+                  (18, "zone2"), (-18, "zone"), (-30, "belt"), (-38, "zone2"), (-46, "belt_dark"),
+                  (-56, "zone2"), (-70, "belt"), (-90, "pole")],
         "colors": {"zone": "#eadcb2", "zone2": "#dcc690", "belt": "#c7a56c",
                    "belt_dark": "#a98a58", "pole": "#a6a78e", "storm": "#e0cfa0",
                    "oval": "#f3ead0", "ring": "#d9c7a0", "ring_dark": "#8e7d62"},
@@ -91,6 +102,8 @@ PRESETS = {
         "kind": "gas", "atmosphere": "#86b6ff", "atm_strength": 0.8, "rings": False,
         "tilt": 28.3, "inclination": 8.0, "clouds": False, "night_lights": False,
         "diameter_km": 49244, "storm": True, "longitude": 28.0,
+        "bands": [(70, "pole"), (55, "zone2"), (40, "zone"), (28, "belt"), (10, "zone2"),
+                  (-12, "zone"), (-28, "belt"), (-45, "zone2"), (-62, "belt_dark"), (-90, "pole")],
         "colors": {"zone": "#4b74e0", "zone2": "#3c63cf", "belt": "#3355bb",
                    "belt_dark": "#253f96", "pole": "#2f4fb0", "storm": "#1c2c70",
                    "oval": "#e6efff"},
@@ -100,13 +113,13 @@ PRESETS = {
         "tilt": 3.0, "inclination": 8.0, "clouds": False, "night_lights": False,
         "diameter_km": 3121.6,
         "colors": {"base": "#d9d2c6", "light": "#f4f2ee", "blue": "#b5cfe0",
-                   "line": "#94603e", "dark": "#a89886"},
+                   "line": "#8a4a2c", "dark": "#a89886"},
     },
     "lava": {
         "kind": "lava", "atmosphere": "#ff6a30", "atm_strength": 0.45, "rings": False,
         "tilt": 10.0, "inclination": 8.0, "clouds": False, "night_lights": False,
         "diameter_km": 3643,
-        "colors": {"crust": "#1d1512", "crust2": "#3d2b22", "ash": "#5a4a40",
+        "colors": {"crust": "#2a1d17", "crust2": "#4a3427", "ash": "#6b5a4e",
                    "glow": "#ff4a08", "hot": "#ffcc55"},
     },
 }
@@ -125,7 +138,7 @@ TEMPLATES = {
         "size": (0.7, "float", "惑星の直径(画面の高さに対する比)"),
         "position": ([0.5, 0.5], "xy", "惑星の中心 [x, y](画面比。0.5,0.5で中央)"),
         "rotation_speed": (6.0, "float", "自転の見かけの速さ(度/秒)。正=模様が右へ流れる(実際の自転の向き)"),
-        "longitude": ("auto", "float", "最初に正面に来る経度(度)"),
+        "longitude": ("auto", "float", "最初に正面に来る経度(度)。earthの既定は陸が多い面"),
         "sun_angle": (35.0, "float", "太陽の向き(度)。0=カメラの後ろ(満月状) / 90=左から(半月) / "
                                      "180=惑星の裏(逆光) / 負の値=右から"),
         "sun_elevation": (15.0, "float", "太陽の高さ(度)。正=上から照らす"),
@@ -272,7 +285,9 @@ def resolve_params(template: str, params: dict = None) -> dict:
             if out[key] == "auto":
                 out[key] = pr[key]
         if out["longitude"] == "auto":
-            out["longitude"] = pr.get("longitude", 0.0)
+            out["longitude"] = pr.get("longitude", 0.0)     # None = エンジン任せ(earth: 陸が多い面)
+            if out["longitude"] is None and out["texture"]:
+                out["longitude"] = 0.0
         if out["texture"] and "clouds" not in params:
             out["clouds"] = False                     # 画像を貼るときは雲・街明かりは画像側に任せる
         if out["texture"] and "night_lights" not in params:
@@ -369,9 +384,15 @@ def make_space_source(template: str, params: dict, n_frames: int, w: int, h: int
             raise FileNotFoundError(blender_runner.INSTALL_HINT)
         if exe is not None:
             render_engine = "cycles" if engine == "cycles" else "eevee"
-            return blender_runner.render_space(template, p, n_frames, w, h, fps, cam, seed=seed,
-                                               cache_dir=Path(cache_dir), engine=render_engine,
-                                               blender=exe)
+            try:
+                return blender_runner.render_space(template, p, n_frames, w, h, fps, cam, seed=seed,
+                                                   cache_dir=Path(cache_dir), engine=render_engine,
+                                                   blender=exe)
+            except (RuntimeError, OSError) as e:
+                if engine != "auto":
+                    raise
+                print(f"  [注意] Blenderでの描画に失敗したので2d描画に切り替えます: {str(e).splitlines()[0]}",
+                      file=sys.stderr, flush=True)
     from .space2d import Space2DSource
 
     return Space2DSource(template, p, n_frames, w, h, fps, cam, seed=seed)
@@ -386,6 +407,73 @@ def describe_templates() -> str:
     return "\n".join(lines)
 
 
+def _parse_value(v: str):
+    """コマンドラインの key=value の値を YAML として解釈する(数値・true・[0.3, 0.5] など)。"""
+    import yaml
+
+    try:
+        return yaml.safe_load(v)
+    except yaml.YAMLError:
+        return v
+
+
+def main(argv=None):
+    """python -m videolab.produce.space [preview テンプレート key=value ...]"""
+    import argparse
+
+    import cv2
+
+    ap = argparse.ArgumentParser(prog="python -m videolab.produce.space",
+                                 description="宇宙テンプレートの一覧表示と試し描き")
+    sub = ap.add_subparsers(dest="cmd")
+    sub.add_parser("list", help="テンプレートとパラメータの一覧(既定)")
+    pv = sub.add_parser("preview", help="1枚(または短い動画)を試し描きする")
+    pv.add_argument("template", choices=list(TEMPLATES))
+    pv.add_argument("params", nargs="*", help="key=value 例: preset=mars size=0.5 position=[0.6,0.5]")
+    pv.add_argument("--engine", default="2d", choices=ENGINES)
+    pv.add_argument("--size", default="1280x720", help="解像度 例 1920x1080")
+    pv.add_argument("--camera", default="static", help="カメラワーク 例 zoom_in / pan_right / orbit")
+    pv.add_argument("--seconds", type=float, default=0.0, help="0より大きいと mp4 を書き出す")
+    pv.add_argument("--fps", type=float, default=30.0)
+    pv.add_argument("--seed", type=int, default=0)
+    pv.add_argument("--out", default=None, help="出力先(既定: preview_<テンプレート>.png / .mp4)")
+    a = ap.parse_args(argv)
+    if a.cmd in (None, "list"):
+        print(describe_templates())
+        return
+    params = {}
+    for kv in a.params:
+        if "=" not in kv:
+            raise SystemExit(f"key=value の形で指定してください: {kv}")
+        k, v = kv.split("=", 1)
+        params[k] = _parse_value(v)
+    w, h = (int(x) for x in a.size.lower().split("x"))
+    n = max(1, int(round(a.seconds * a.fps))) if a.seconds > 0 else 1
+    src = make_space_source(a.template, params, n, w, h, a.fps, CameraMove(a.camera), engine=a.engine,
+                            seed=a.seed)
+    if n == 1:
+        out = Path(a.out or f"preview_{a.template}.png")
+        ok, buf = cv2.imencode(out.suffix or ".png", cv2.cvtColor(src.frame(0), cv2.COLOR_RGB2BGR))
+        out.write_bytes(buf.tobytes())               # 日本語パスでも書けるように
+        print(f"書き出しました: {out}")
+        return
+    import subprocess
+
+    from .. import ffmpeg_util as ff
+
+    out = Path(a.out or f"preview_{a.template}.mp4")
+    cmd = [ff.find_ffmpeg(), "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24",
+           "-s", f"{w}x{h}", "-r", f"{a.fps}", "-i", "-", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+           "-crf", "20", str(out)]
+    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE)
+    for i in range(n):
+        proc.stdin.write(src.frame(i).tobytes())
+    proc.stdin.close()
+    proc.wait()
+    print(f"書き出しました: {out}")
+
+
 if __name__ == "__main__":
-    sys.stdout.reconfigure(encoding="utf-8") if hasattr(sys.stdout, "reconfigure") else None
-    print(describe_templates())
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
+    main()

@@ -8,11 +8,15 @@
               多重オクターブで生成(同じ種・解像度ならプロセス内で再利用) /
               星空レイヤー(遠・近の2枚。上下左右がつながる)と明るい星のリストを描画 /
               惑星スプライト(天体を中心に置いた小画像)上の球の幾何
-              (緯度経度・法線・接ベクトル)と大気・環を計算
-  毎フレーム: 自転分だけ経度をずらして cv2.remap でテクスチャを貼る → 陰影・雲・夜景・大気を合成 →
-              カメラワークに合わせてスプライトを拡大/移動して星空に重ねる
+              (緯度経度・法線・接ベクトル)と、太陽の向きだけで決まる大気・環を計算
+  毎フレーム: 自転分だけ経度をずらして cv2.remap でテクスチャを貼る → 陰影・雲・夜景・大気を
+              スレッド並列で計算 → カメラワークに合わせてスプライトを拡大/移動して星空に重ねる
+
+速さの目安(1920x1080, 4コアCPU, 1フレーム): 惑星 35〜100ms / 太陽・ブラックホール 60〜90ms /
+  星空 5〜70ms。初期化(テクスチャ生成)は1〜6秒。640x360 なら数分の1。
 
 座標の約束: カメラ座標は x右 / y上 / z手前。惑星座標は y=北極、経度0が z方向、東=+x。
+地表画像(texture)は正距円筒図法(左端=西経180度、上=北極)。
 """
 
 import math
@@ -76,13 +80,6 @@ def _ramp(x: np.ndarray, stops) -> np.ndarray:
     for c in range(3):
         out[..., c] = np.interp(x, pos, cols[:, c])
     return out
-
-
-def _tonemap(x: np.ndarray) -> np.ndarray:
-    """0.75までは素通し、それより明るい所はなめらかに1へ寄せる(白飛びを柔らかく)。"""
-    k = 0.75
-    over = np.maximum(x - k, 0.0)
-    return np.minimum(x, k) + (1.0 - k) * (1.0 - np.exp(-over / (1.0 - k)))
 
 
 def _rot_x(a):
@@ -218,14 +215,20 @@ def sphere_fbm(tw: int, freq: float, octaves: int, seed: int, gain: float = 0.5,
         while res < tw and res < 8.0 * math.pi * f * smax:
             res *= 2
         res = min(res, tw)
-        d = _sphere_dirs(res)
-        if warp is not None:
-            d = d + _resize_wrap(warp, res)
-        rot = _rand_rot(rng, y_only_rot)
-        p = (d.reshape(-1, 3) @ rot.T) * (st * F32(f)) + rng.uniform(0, 64, 3).astype(F32)
-        v = vnoise3(p.reshape(d.shape), seed * 131 + o * 7919 + 1).reshape(res // 2, res)
-        if ridged:
-            v = 1.0 - np.abs(2.0 * v - 1.0)
+        d = _sphere_dirs(res).reshape(-1, 3)
+        wf = _resize_wrap(warp, res).reshape(-1, 3) if warp is not None else None
+        m = (_rand_rot(rng, y_only_rot).T * (st * F32(f))[None, :]).astype(F32)
+        off = rng.uniform(0, 64, 3).astype(F32)
+        tab = _lattice(int(seed * 131 + o * 7919 + 1))
+        v = np.empty(len(d), F32)
+
+        def work(sl, d=d, wf=wf, m=m, off=off, tab=tab, v=v):
+            q = d[sl] if wf is None else d[sl] + wf[sl]
+            r = _vnoise3_core(q @ m + off, tab)
+            v[sl] = (1.0 - np.abs(2.0 * r - 1.0)) if ridged else r
+
+        _parallel(work, len(d), 32768)
+        v = v.reshape(res // 2, res)
         total += F32(amp) * _resize_wrap(v, tw)
         norm += amp
         amp *= gain
@@ -239,7 +242,7 @@ def _warp_field(seed: int, freq: float, strength: float, res: int = 128, octaves
 
 def _stamp_craters(tw: int, rng, n: int, rmin: float, rmax: float, height: np.ndarray,
                    bright: np.ndarray, depth: float = 0.18, fresh: float = 0.0, rays: int = 0,
-                   lat_limit: float = None):
+                   lat_limit: float = None, size_pow: float = 2.4):
     """クレーター(椀状の凹み+縁の盛り上がり)を高さマップに刻む。r はラジアン。"""
     th = tw // 2
     lat_rows = (math.pi / 2 - ((np.arange(th) + 0.5) / th) * math.pi)
@@ -251,7 +254,7 @@ def _stamp_craters(tw: int, rng, n: int, rmin: float, rmax: float, height: np.nd
         if lat_limit is not None and abs(lat0) > lat_limit:
             continue
         lon0 = rng.uniform(-math.pi, math.pi)
-        r = rmin * (rmax / rmin) ** (rng.random() ** 2.4)
+        r = rmin * (rmax / rmin) ** (rng.random() ** size_pow)
         is_ray = k < rays
         ext = r * (6.0 if is_ray else 2.4)
         r0 = int(max(0, math.floor((math.pi / 2 - (lat0 + ext)) / math.pi * th)))
@@ -285,7 +288,7 @@ def _stamp_craters(tw: int, rng, n: int, rmin: float, rmax: float, height: np.nd
                                  (np.sin(lat)[:, None] - math.sin(lat0) * cosd))
                 rr = np.random.default_rng(int(k) + 5).random(64)
                 ray = np.interp((ang + math.pi) / TAU * 64, np.arange(65), np.r_[rr, rr[:1]])
-                b = b + 0.55 * (ray ** 4) * np.exp(-np.maximum(x - 1.0, 0) / 1.8) * (x > 0.9)
+                b = b + 0.4 * (ray ** 4) * np.exp(-np.maximum(x - 1.0, 0) / 1.8) * (x > 0.9)
             bright[np.ix_(rows, cols)] += b.astype(F32)
 
 
@@ -296,7 +299,7 @@ def _height_to_bump(height: np.ndarray) -> np.ndarray:
     dl = TAU / tw
     dp = math.pi / th
     ge = (np.roll(height, -1, axis=1) - np.roll(height, 1, axis=1)) / (2 * dl)
-    ge /= np.maximum(np.cos(lat), 0.05)
+    ge /= np.maximum(np.cos(lat), 0.25)          # 極の近くで傾きが暴れないように
     gn = np.zeros_like(height)
     gn[1:-1] = (height[:-2] - height[2:]) / (2 * dp)
     return np.stack([ge, gn], axis=-1).astype(F32)
@@ -329,6 +332,8 @@ class PlanetTexture:
     def __init__(self, tw, surface, bump=None, clouds=None, emission=None, emission_day=0.0):
         self.tw = tw
         self.surface = surface
+        # 縁(斜めに見える所)のちらつき防止用の低解像度版(1/4)
+        self.surface_lo = cv2.pyrDown(cv2.pyrDown(surface)) if tw >= 512 else surface
         self.bump = bump
         self.clouds = clouds
         self.emission = emission
@@ -405,7 +410,7 @@ def _tex_earth(tw, seed, c, pr, clouds=True, night_lights=True):
         cv = sphere_fbm(tw, 2.4, 8, seed + 5, gain=0.55, warp=warp2)
         bias = (0.05 * np.exp(-(lat / 7) ** 2) - 0.07 * np.exp(-((alat - 24) / 9) ** 2)
                 + 0.05 * np.exp(-((alat - 55) / 12) ** 2))
-        cl = _u8(_smooth(0.5, 0.72, cv + bias) * 0.95)
+        cl = _u8(_smooth(0.49, 0.71, cv + bias) * 0.96)
     em = None
     if night_lights:
         cities = sphere_fbm(tw, 45.0, 3, seed + 7)
@@ -426,7 +431,7 @@ def _tex_rocky(tw, seed, c, pr):
     fine = sphere_fbm(tw, 40.0, 3, seed + 3)
     moon = pr["craters"] >= 0.9
     if moon:
-        mare = _smooth(0.57, 0.63, big + 0.13 * dirs_z)
+        mare = _smooth(0.55, 0.64, big + 0.13 * dirs_z) * (0.8 + 0.2 * detail)
         col = _mix(_rgb(c["base"]), _rgb(c["light"]), _smooth(0.4, 0.7, detail)[..., None])
         col = _mix(col, _rgb(c["dark"]), (mare * 0.9)[..., None])
     else:
@@ -439,9 +444,9 @@ def _tex_rocky(tw, seed, c, pr):
     col *= (0.86 + 0.28 * detail + 0.1 * (fine - 0.5))[..., None]
     height = ((detail - 0.5) * 0.012 + (fine - 0.5) * 0.0012).astype(F32)
     bright = np.zeros_like(height)
-    n = int(1300 * pr["craters"] * (tw / 2048) ** 0.5)
-    _stamp_craters(tw, rng, n, 0.004 * 2048 / tw * 0.7 + 0.003, 0.11, height, bright,
-                   depth=0.2, fresh=0.35 if moon else 0.12, rays=3 if moon else 0)
+    n = int(1000 * pr["craters"] * (tw / 2048) ** 0.5)
+    _stamp_craters(tw, rng, n, 0.004 * 2048 / tw * 0.7 + 0.003, 0.085, height, bright,
+                   depth=0.2, fresh=0.16 if moon else 0.08, rays=3 if moon else 0, size_pow=3.2)
     col *= (1.0 + bright * (1.0 - 0.6 * mare))[..., None]
     if pr.get("polar_caps"):
         cap = _smooth(76, 82, np.abs(lat) + 5 * (detail - 0.5))
@@ -451,40 +456,32 @@ def _tex_rocky(tw, seed, c, pr):
     return PlanetTexture(tw, surface, _height_to_bump(height))
 
 
-_GAS_BANDS = {
-    "jupiter": [(62, "pole"), (48, "zone2"), (41, "belt"), (35, "zone"), (29, "belt"),
-                (20, "zone"), (7, "belt_dark"), (-6, "zone2"), (-19, "belt"), (-27, "zone"),
-                (-33, "belt"), (-40, "zone2"), (-47, "belt_dark"), (-60, "zone2"), (-90, "pole")],
-    "saturn": [(70, "pole"), (55, "zone2"), (45, "belt"), (38, "zone"), (30, "belt_dark"),
-               (18, "zone2"), (-18, "zone"), (-30, "belt"), (-38, "zone2"), (-46, "belt_dark"),
-               (-56, "zone2"), (-70, "belt"), (-90, "pole")],
-    "neptune": [(70, "pole"), (55, "zone2"), (40, "zone"), (28, "belt"), (10, "zone2"),
-                (-12, "zone"), (-28, "belt"), (-45, "zone2"), (-62, "belt_dark"), (-90, "pole")],
-}
-
-
 def _tex_gas(tw, seed, c, pr, name):
     rng = np.random.default_rng(seed + 200)
     lat = np.degrees(_lat_grid(tw))
     lon = _lon_grid(tw)
-    lut = _band_lut(_GAS_BANDS.get(name, _GAS_BANDS["jupiter"]), c, rng,
+    lut = _band_lut(pr["bands"], c, rng,
                     sigma_deg=0.9 if name == "jupiter" else 1.6,
                     jitter=0.06 if name == "jupiter" else 0.03)
-    turb = 4.0 if name == "jupiter" else 1.6
-    pert = sphere_fbm(tw, 2.2, 7, seed + 1, stretch=(1.0, 4.5, 1.0), y_only_rot=True, gain=0.55)
-    lat_p = lat + turb * 2.0 * (pert - 0.5)
+    turb = 3.2 if name == "jupiter" else 1.4
+    warp = _warp_field(seed + 5, 2.5, 0.12 if name == "jupiter" else 0.05)
+    pert = sphere_fbm(tw, 2.2, 7, seed + 1, stretch=(1.0, 4.5, 1.0), y_only_rot=True, gain=0.55,
+                      warp=warp)
+    pert2 = sphere_fbm(tw, 9.0, 4, seed + 6, stretch=(1.0, 2.5, 1.0), y_only_rot=True, warp=warp)
+    lat_p = lat + turb * 2.0 * (pert - 0.5) + turb * 0.8 * (pert2 - 0.5)
     col = _lut_sample(lut, lat_p)
     streak = sphere_fbm(tw, 6.0, 5, seed + 2, stretch=(1.0, 7.0, 1.0), y_only_rot=True)
-    col *= (0.9 + 0.2 * streak)[..., None]
+    col *= (0.93 + 0.14 * streak)[..., None]
     lat2 = np.broadcast_to(lat, (tw // 2, tw))
     lon2 = np.broadcast_to(lon, (tw // 2, tw))
     if pr.get("storm") and name == "jupiter":
-        d = _oval(lat2, lon2, -22.0, 0.0, 5.2, math.radians(11.0))
-        swirl = sphere_fbm(tw, 18.0, 3, seed + 3)
-        core = _smooth(1.0, 0.55, d + 0.25 * (swirl - 0.5))
-        spot = _mix(_rgb(c["storm"]), _rgb(c["storm"]) * 1.25, _smooth(0.2, 0.7, swirl)[..., None])
-        col = _mix(col, _rgb(c["zone"]), (_smooth(1.6, 1.05, d) * (1 - core) * 0.7)[..., None])
-        col = _mix(col, spot, core[..., None])
+        d = _oval(lat2, lon2, -22.0, 0.0, 4.6, math.radians(8.5))
+        swirl = sphere_fbm(tw, 14.0, 3, seed + 3)
+        core = _smooth(1.0, 0.7, d + 0.12 * (swirl - 0.5))
+        inner = _smooth(0.75, 0.2, d)
+        spot = _mix(_rgb(c["storm"]) * 0.95, _rgb(c["storm"]) * 1.12, (inner * 0.6 + 0.4 * swirl)[..., None])
+        col = _mix(col, _rgb(c["zone"]), (_smooth(1.7, 1.05, d) * (1 - core) * 0.75)[..., None])
+        col = _mix(col, spot, (core * 0.92)[..., None])
         for k in range(6):
             lo = math.radians(rng.uniform(-180, 180))
             la = rng.choice([-39.0, -41.5, 33.0, -52.0])
@@ -514,6 +511,16 @@ def _tex_venus(tw, seed, c, pr):
     return PlanetTexture(tw, surface)
 
 
+def _iso_lines(v: np.ndarray, width: float, level: float = 0.5) -> np.ndarray:
+    """ノイズの等高線(v=level)を、球面上でほぼ一定の太さ(width, ラジアン)の線にする。"""
+    tw = v.shape[1]
+    gy, gx = np.gradient(v)
+    gx = gx / np.maximum(np.cos(_lat_grid(tw)), 0.05)
+    grad = np.sqrt(gx * gx + gy * gy) / F32(TAU / tw) + F32(1e-6)
+    dist = np.abs(v - level) / grad
+    return _smooth(width, width * 0.35, dist).astype(F32)
+
+
 def _tex_ice(tw, seed, c, pr):
     rng = np.random.default_rng(seed + 300)
     base = sphere_fbm(tw, 2.0, 6, seed + 1)
@@ -521,14 +528,14 @@ def _tex_ice(tw, seed, c, pr):
     col = _mix(col, _rgb(c["blue"]), (_smooth(0.55, 0.7, sphere_fbm(tw, 1.5, 4, seed + 2)) * 0.5)[..., None])
     height = np.zeros(col.shape[:2], F32)
     lines = np.zeros(col.shape[:2], F32)
-    for k, (fr, w) in enumerate(((1.6, 0.975), (3.2, 0.972), (6.0, 0.965))):
-        r = sphere_fbm(tw, fr, 3, seed + 10 + k, ridged=True, gain=0.4)
-        ln = _smooth(w - 0.03, w, r)
-        lines = np.maximum(lines, ln * (1.0 - 0.25 * k))
-        height += ln * 0.002
-    chaos = _smooth(0.66, 0.72, sphere_fbm(tw, 3.0, 5, seed + 5))
-    col = _mix(col, _rgb(c["line"]), (lines * 0.75)[..., None])
-    col = _mix(col, _rgb(c["line"]) * 1.1, (chaos * 0.45)[..., None])
+    for k, (fr, wid) in enumerate(((1.6, 0.006), (2.7, 0.0045), (4.5, 0.0035), (7.5, 0.0025))):
+        v = sphere_fbm(tw, fr, 1 if k < 2 else 2, seed + 10 + k, gain=0.3)
+        ln = _iso_lines(v, wid)                                # 模様の等高線 = 一定幅の線
+        lines = np.maximum(lines, ln * (1.0 - 0.15 * k))
+        height += ln * 0.0025
+    chaos = _smooth(0.7, 0.78, sphere_fbm(tw, 3.0, 5, seed + 5))
+    col = _mix(col, _rgb(c["line"]), (lines * 0.85)[..., None])
+    col = _mix(col, _rgb(c["line"]) * 1.2, (chaos * 0.35)[..., None])
     bright = np.zeros_like(height)
     _stamp_craters(tw, rng, 25, 0.005, 0.03, height, bright, depth=0.1, fresh=0.2)
     col = np.clip(col * (1 + bright)[..., None], 0, 1)
@@ -542,14 +549,14 @@ def _tex_lava(tw, seed, c, pr):
     col = _ramp(base, [(0.3, c["crust"]), (0.55, c["crust2"]), (0.75, c["ash"])])
     r1 = sphere_fbm(tw, 1.8, 4, seed + 2, ridged=True, gain=0.45)
     r2 = sphere_fbm(tw, 6.5, 3, seed + 3, ridged=True, gain=0.45)
-    crack = np.maximum(_smooth(0.9, 0.975, r1), 0.7 * _smooth(0.92, 0.98, r2))
-    hot = _smooth(0.975, 0.995, r1)
+    crack = np.maximum(_smooth(0.84, 0.95, r1), 0.8 * _smooth(0.88, 0.97, r2))
+    hot = _smooth(0.95, 0.99, r1)
     lakes = np.zeros_like(base)
     _stamp_craters(tw, rng, 18, 0.01, 0.05, lakes, None, depth=1.0)
     lake = _smooth(-0.004, -0.012, lakes)
     glow = np.clip(crack + lake, 0, 1)
     col = _mix(col, _rgb(c["crust"]) * 0.6, glow[..., None])
-    em = glow[..., None] * _rgb(c["glow"]) + (hot + lake * 0.6)[..., None] * _rgb(c["hot"]) * 0.8
+    em = glow[..., None] * _rgb(c["glow"]) * 1.2 + (hot + lake * 0.7)[..., None] * _rgb(c["hot"])
     height = ((base - 0.5) * 0.01 - glow * 0.004).astype(F32)
     surface = np.dstack([_u8(np.clip(col, 0, 1)), _u8(0.15 * glow)])
     return PlanetTexture(tw, surface, _height_to_bump(height), None, _u8(np.clip(em, 0, 1)), 0.55)
@@ -629,6 +636,8 @@ class _SphereGeom:
         north_p = np.stack([-npl[1] * npl[0] / cl, cl, -npl[1] * npl[2] / cl])
         self.east = (M @ east_p).astype(F32)
         self.north = (M @ north_p).astype(F32)
+        # 縁ほど1画素に多くの模様が入る → 低解像度テクスチャへ切り替える重み
+        self.lo_w = _smooth(0.42, 0.16, z).astype(F32)
 
     def sample(self, tex: np.ndarray, lon_offset: float, interp=cv2.INTER_LINEAR) -> np.ndarray:
         """経度をずらしてテクスチャを貼る → (N, C) の配列。"""
@@ -725,9 +734,10 @@ class StarBackground:
         far = np.zeros((Hc, Wc, 3), F32)
         near = np.zeros((Hc, Wc, 3), F32)
         self.bright = None
+        self.res_k = res_k = min(1.0, rs ** 0.5)      # 低解像度では細かい星を減らす(ざらつき防止)
         if density > 0:
             sig_f = max(0.55, 0.6 * rs)
-            n_far = int(2600 * density * area)
+            n_far = int(2600 * density * area * res_k)
             xs, ys = rng.random(n_far) * Wc, rng.random(n_far) * Hc
             b = (0.1 + 0.75 * rng.random(n_far) ** 2.6)
             col = star_colors(rng, n_far, color_variation)
@@ -782,7 +792,7 @@ class StarBackground:
         out += warm[..., None] * np.array([0.8, 0.28, 0.25], F32) * 0.08
         out = cv2.resize(out, (Wc, Hc), interpolation=cv2.INTER_CUBIC) * F32(strength)
         if milky_way and density > 0:           # 天の川に沿って細かい星を増やす
-            n = int(5000 * strength * density * (Wc * Hc) / float(self.w * self.h))
+            n = int(5000 * strength * density * (Wc * Hc) / float(self.w * self.h) * self.res_k)
             xs = rng.random(n * 3) * Wc
             ys = rng.random(n * 3) * Hc
             yc = Hc * (0.5 + 0.2 * np.sin(TAU * xs / Wc + ph))
@@ -796,7 +806,8 @@ class StarBackground:
 
     def _warp_layer(self, layer, s, tx, ty):
         cx, cy = self.Wc / 2.0, self.Hc / 2.0
-        m = np.array([[s, 0, self.w / 2.0 - s * cx + tx], [0, s, self.h / 2.0 - s * cy + ty]], F32)
+        c = 0.5 * (s - 1.0)                                   # 画素中心の補正
+        m = np.array([[s, 0, self.w / 2.0 - s * cx + tx + c], [0, s, self.h / 2.0 - s * cy + ty + c]], F32)
         return cv2.warpAffine(layer, m, (self.w, self.h), flags=cv2.INTER_LINEAR,
                               borderMode=cv2.BORDER_WRAP)
 
@@ -806,9 +817,13 @@ class StarBackground:
 
     def render(self, t: float, s: float, ox: float, oy: float, orbit_px: float = 0.0) -> np.ndarray:
         s0, tx0, ty0 = self.layer_transform(STAR_PARALLAX[0], s, ox, oy, orbit_px)
-        img = self._warp_layer(self.far, s0, tx0, ty0)
         s1, tx1, ty1 = self.layer_transform(STAR_PARALLAX[1], s, ox, oy, orbit_px)
-        img = cv2.add(img, self._warp_layer(self.near, s1, tx1, ty1))
+        key = tuple(round(v, 5) for v in (s0, tx0, ty0, s1, tx1, ty1))
+        if key != getattr(self, "_key", None):          # カメラが止まっていれば使い回す
+            base = self._warp_layer(self.far, s0, tx0, ty0)
+            self._base = cv2.add(base, self._warp_layer(self.near, s1, tx1, ty1))
+            self._key = key
+        img = self._base.copy()
         if self.bright is not None:
             self._draw_bright(img, t, s1, tx1, ty1)
         return img
@@ -853,9 +868,12 @@ def _orbit_px(orbit_deg: float, h: int) -> float:
     return math.radians(orbit_deg) * f_px
 
 
-def _place_sprite(img: np.ndarray, rgb: np.ndarray, alpha: np.ndarray, cx: float, cy: float,
-                  k: float, half_w: float, half_h: float):
-    """前乗算RGB+αのスプライトを、中心(cx, cy)・倍率kで画面に合成する(サブピクセル)。"""
+def _place_sprite(img: np.ndarray, buf: np.ndarray, cx: float, cy: float, k: float,
+                  half_w: float, half_h: float):
+    """前乗算RGB+α(buf: H×W×4)のスプライトを、中心(cx, cy)・倍率kで画面に合成する。
+
+    倍率1かつ整数位置なら補間せずにそのまま重ねる(静止カメラで速い)。
+    """
     H, W = img.shape[:2]
     x0 = int(math.floor(cx - k * half_w)) - 1
     y0 = int(math.floor(cy - k * half_h)) - 1
@@ -864,32 +882,64 @@ def _place_sprite(img: np.ndarray, rgb: np.ndarray, alpha: np.ndarray, cx: float
     cx0, cy0, cx1, cy1 = max(0, x0), max(0, y0), min(W, x1), min(H, y1)
     if cx1 <= cx0 or cy1 <= cy0:
         return
-    m = np.array([[k, 0, cx - k * half_w - cx0], [0, k, cy - k * half_h - cy0]], F32)
-    src = np.dstack([rgb, alpha])
-    dst = cv2.warpAffine(src, m, (cx1 - cx0, cy1 - cy0), flags=cv2.INTER_LINEAR,
-                         borderMode=cv2.BORDER_CONSTANT, borderValue=0)
-    patch = img[cy0:cy1, cx0:cx1].astype(F32) * F32(1 / 255.0)
-    a = dst[..., 3:4]
-    out = patch * (1.0 - a) + dst[..., :3]
-    img[cy0:cy1, cx0:cx1] = _u8(np.clip(out, 0, 1))
+    tx = cx - k * half_w - cx0 + 0.5 * (k - 1.0)          # cv2は画素中心を整数座標とするので補正
+    ty = cy - k * half_h - cy0 + 0.5 * (k - 1.0)
+    if abs(k - 1.0) < 1e-6 and abs(tx - round(tx)) < 1e-3 and abs(ty - round(ty)) < 1e-3:
+        ix, iy = int(round(tx)), int(round(ty))           # スプライト原点の、切り出し領域内の位置
+        bh, bw = buf.shape[:2]
+        dx0, dy0 = max(0, ix), max(0, iy)
+        dx1, dy1 = min(cx1 - cx0, ix + bw), min(cy1 - cy0, iy + bh)
+        if dx1 <= dx0 or dy1 <= dy0:
+            return
+        dst = buf[dy0 - iy:dy1 - iy, dx0 - ix:dx1 - ix]
+        cx0, cy0, cx1, cy1 = cx0 + dx0, cy0 + dy0, cx0 + dx1, cy0 + dy1
+    else:
+        m = np.array([[k, 0, tx], [0, k, ty]], F32)
+        dst = cv2.warpAffine(buf, m, (cx1 - cx0, cy1 - cy0), flags=cv2.INTER_LINEAR,
+                             borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+    region = img[cy0:cy1, cx0:cx1]
+
+    def work(sl):
+        d = dst[sl]
+        p = region[sl].astype(F32) * F32(1 / 255.0)
+        out = p * (1.0 - d[..., 3:4]) + d[..., :3]
+        region[sl] = _u8(out)
+
+    _parallel(work, cy1 - cy0, 64)
 
 
 def _bloom(img: np.ndarray, box, threshold: float = 0.6, strength: float = 0.7, sigma: float = 0.02):
     """明るい所のにじみ(低解像度でぼかして足す)。box=(x0, y0, x1, y1) の範囲だけ。"""
     H, W = img.shape[:2]
     x0, y0, x1, y1 = (max(0, int(box[0])), max(0, int(box[1])), min(W, int(box[2])), min(H, int(box[3])))
-    if x1 - x0 < 8 or y1 - y0 < 8:
+    if x1 - x0 < 16 or y1 - y0 < 16:
         return
     region = img[y0:y1, x0:x1]
     ds = 4
-    small = cv2.resize(region, (max(2, (x1 - x0) // ds), max(2, (y1 - y0) // ds)),
-                       interpolation=cv2.INTER_AREA).astype(F32) / 255.0
+    sw, sh = max(4, (x1 - x0) // ds), max(4, (y1 - y0) // ds)
+    small = cv2.resize(region, (sw, sh), interpolation=cv2.INTER_AREA).astype(F32) * F32(1 / 255.0)
     lum = small.max(axis=2, keepdims=True)
     br = small * np.clip((lum - threshold) / (1 - threshold), 0, 1)
     sg = max(1.0, sigma * H / ds)
-    glow = cv2.GaussianBlur(br, (0, 0), sg) * 0.6 + cv2.GaussianBlur(br, (0, 0), sg * 3.5) * 0.5
+    g1 = cv2.GaussianBlur(br, (0, 0), sg)
+    tiny = cv2.resize(br, (max(2, sw // 4), max(2, sh // 4)), interpolation=cv2.INTER_AREA)
+    g2 = cv2.resize(cv2.GaussianBlur(tiny, (0, 0), max(1.0, sg * 3.5 / 4)), (sw, sh),
+                    interpolation=cv2.INTER_LINEAR)
+    glow = _u8((g1 * 0.6 + g2 * 0.5) * strength)
     glow = cv2.resize(glow, (x1 - x0, y1 - y0), interpolation=cv2.INTER_LINEAR)
-    img[y0:y1, x0:x1] = cv2.add(region, _u8(np.clip(glow * strength, 0, 1)))
+    img[y0:y1, x0:x1] = cv2.add(region, glow)
+
+
+def _tonemap(x: np.ndarray) -> np.ndarray:
+    """0.75までは素通し、それより明るい所はなめらかに1へ寄せる(白飛びを柔らかく)。
+
+    配列をその場で書き換えて返す(明るい画素だけ計算するので速い)。
+    """
+    m = x > 0.75
+    if m.any():
+        v = x[m]
+        x[m] = 0.75 + 0.25 * (1.0 - np.exp(-(v - 0.75) / 0.25))
+    return x
 
 
 # ================================================================ 惑星
@@ -904,6 +954,7 @@ _KIND_SHADE = {   # 明暗境界のぼかし / 周縁減光 / バンプの強さ
 }
 
 _RING_IN, _RING_OUT = 1.24, 2.33
+_AMB = 0.012                      # 夜側の最低の明るさ
 
 
 def _ring_profile(n: int, seed: int, colors: dict):
@@ -922,28 +973,45 @@ def _ring_profile(n: int, seed: int, colors: dict):
         fine += np.interp(r, np.linspace(_RING_IN, _RING_OUT, fr), rng.random(fr)) / 4
     op = np.clip(op * (0.65 + 0.7 * fine), 0, 0.97)
     op = cv2.GaussianBlur(op.astype(F32)[:, None], (1, 5), 0)[:, 0]
-    base, dark = np.array(hex_rgb(colors.get("ring", "#d9c7a0"))), np.array(hex_rgb(colors.get("ring_dark", "#8e7d62")))
+    base = np.array(hex_rgb(colors.get("ring", "#d9c7a0")))
+    dark = np.array(hex_rgb(colors.get("ring_dark", "#8e7d62")))
     t = np.clip((r - 1.3) / 0.6, 0, 1)
     col = dark[None, :] * (1 - t[:, None]) + base[None, :] * t[:, None]
     col *= (0.85 + 0.3 * fine)[:, None]
-    col[r > 2.03] *= 0.9
+    col[r > 2.03] *= 0.92
     return op.astype(F32), col.astype(F32)
 
 
+def _best_longitude(tex: PlanetTexture) -> float:
+    """陸(海の鏡面マスクが無い所)が一番多く見える経度(ラジアン)。"""
+    tw = tex.tw
+    land = (tex.surface[::8, ::8, 3] < 128).astype(np.float64)
+    lat = _lat_grid(tw)[::8, 0].astype(np.float64)
+    prof = (land * np.cos(lat)[:, None]).sum(0)
+    n = len(prof)
+    k = np.cos(((np.arange(n) - n / 2) / n) * TAU).clip(0, None)   # 見えている半球の重み
+    score = np.real(np.fft.ifft(np.fft.fft(prof) * np.conj(np.fft.fft(np.fft.ifftshift(k)))))
+    best = int(np.argmax(score))
+    return float(((best + 0.5) / n) * TAU - math.pi) + math.radians(-15.0)
+
+
 class PlanetBody:
-    """1つの惑星(スプライト方式)。"""
+    """1つの惑星(スプライト方式)。
+
+    幾何と「太陽の向きだけで決まるもの」(大気の外縁・環・環の影・明暗境界)は前計算し、
+    毎フレームは自転でずれたテクスチャの標本化と陰影計算(スレッド並列)だけを行う。
+    """
 
     def __init__(self, preset, texture_path, diameter_px, center, rotation_speed, longitude,
                  sun_angle, sun_elevation, atmosphere, atm_strength, rings, tilt, inclination,
-                 clouds, night_lights, seed, s_max, frame_h):
+                 clouds, night_lights, seed, s_max):
         pr = PRESETS[preset]
         self.pr = pr
         self.kind = pr["kind"]
         self.center = center                                  # 画面比 (x, y)
         self.R0 = diameter_px / 2.0
-        self.s_max = s_max
         self.rotation_speed = rotation_speed
-        self.longitude = math.radians(longitude)
+        self.longitude = math.radians(longitude) if longitude is not None else 0.0
         self.sun_angle, self.sun_elevation = sun_angle, sun_elevation
         self.atm = _rgb(atmosphere) if atmosphere else None
         self.atm_strength = atm_strength if atmosphere else 0.0
@@ -963,204 +1031,272 @@ class PlanetBody:
         self.Rs = Rr * sc                                     # スプライト上の半径(px)
         self.half_w = int(math.ceil(hw * sc)) + 2
         self.half_h = int(math.ceil(hh * sc)) + 2
-        self.geo = _SphereGeom(self.Rs, self.half_w, self.half_h, self.M)
+        g = self.geo = _SphereGeom(self.Rs, self.half_w, self.half_h, self.M)
         need = TAU * self.Rs * 0.8
         tw = 256
         while tw < need and tw < 2048:
             tw *= 2
-        self.tex = planet_texture(preset, int(seed), tw, bool(clouds) and not texture_path or
-                                  (bool(clouds) and bool(texture_path)), bool(night_lights),
+        self.tex = planet_texture(preset, int(seed), tw, bool(clouds), bool(night_lights),
                                   texture_path or None)
+        if longitude is None:                                 # 自動: 陸(反射率が高い所)が多い面を正面に
+            self.longitude = _best_longitude(self.tex)
         self.cloud_speed = 1.18
-        self._lcache = {}
+        self.cloud_col = _rgb(pr["colors"].get("cloud", "#ffffff"))
+        soft, limb, bump_k, lommel = _KIND_SHADE[self.kind]
+        self.soft, self.bump_k, self.lommel = soft, bump_k, lommel
+        self.limb_f = (1.0 - limb + limb * np.power(g.nz, F32(0.45))).astype(F32) if limb > 0 else None
+        if self.atm is not None:
+            self.rim_base = np.power(1.0 - g.nz, F32(2.2)).astype(F32)
+            self.haze_base = np.power(1.0 - g.nz, F32(1.5)).astype(F32)
         if self.rings:
             self.ring_op, self.ring_col = _ring_profile(2048, seed, pr["colors"])
-        self._frame_h = frame_h
+        pos = np.full(g.H * g.W, -1, np.int64)
+        pos[g.idx] = np.arange(len(g.idx))
+        self._pos = pos                                       # スプライト画素 → 円盤内の番号
+        self.buf = np.zeros((g.H, g.W, 4), F32)
+        self._L_key = None
 
-    # ---- 太陽方向に依存するが自転には依存しない部分(大気の外縁・環)はキャッシュ
-    def _static_layers(self, L: np.ndarray):
-        key = tuple(np.round(L, 5))
-        if key in self._lcache:
-            return self._lcache[key]
+    # ---- 太陽方向ごとの前計算(orbit以外では最初の1回だけ)
+    def _prep_light(self, L: np.ndarray):
+        key = tuple(round(float(v), 6) for v in L)
+        if key == self._L_key:
+            return
+        self._L_key = key
         g = self.geo
-        out = {}
+        N = len(g.idx)
+        ndl_g = (L[0] * g.n[0] + L[1] * g.n[1] + L[2] * g.n[2]).astype(F32)
+        st = {"ndl_g": ndl_g, "gate": np.clip(ndl_g * 6.0 + 0.4, 0, 1).astype(F32)}
+        st["light_g"] = np.sqrt(np.clip((ndl_g + 0.08) / 1.08, 0, 1)).astype(F32)
+        if self.tex.emission is not None:
+            night = 1.0 - _smooth(-0.1, 0.12, ndl_g)
+            st["emis_vis"] = (night + self.tex.emission_day * (1.0 - night)).astype(F32)
+        if self.atm is not None:
+            s = self.atm_strength
+            fwd = max(0.0, -float(L[2])) * 0.6
+            st["rim"] = (self.rim_base * np.clip(ndl_g * 0.8 + 0.35 + fwd, 0, 1) * (s * 0.75)).astype(F32)
+            st["haze"] = (s * 0.35 * self.haze_base * st["light_g"]).astype(F32)
+        Hv = L + np.array([0, 0, 1], F32)
+        st["H"] = (Hv / np.linalg.norm(Hv)).astype(F32)
+        buf = self.buf
+        buf[:] = 0
+        flat = buf.reshape(-1, 4)
+        halo_disc = np.zeros((N, 3), F32)
         if self.atm is not None:
             D = g.D.ravel()
             sel = np.flatnonzero((D > 1.0 - 1.0 / g.R) & (D < 1.0 + self.halo_w))
             d = D[sel]
             x, y = g.X.ravel()[sel] / d, g.Y.ravel()[sel] / d
             tt = np.clip((d - 1.0) / self.halo_w, 0, 1)
-            lit = np.clip((x * L[0] + y * L[1]) * 0.9 + 0.3 + max(0.0, -L[2]) * 0.8, 0, 1)
+            lit = np.clip((x * L[0] + y * L[1]) * 0.9 + 0.3 + max(0.0, -float(L[2])) * 0.8, 0, 1)
             fall = np.exp(-tt * 3.2) * (1 - _smooth(0.6, 1.0, tt))
-            out["halo_idx"] = sel
-            out["halo"] = (self.atm[None, :] * (self.atm_strength * 0.8 * fall * lit)[:, None]).astype(F32)
+            halo = (self.atm[None, :] * (self.atm_strength * 0.8 * fall * lit)[:, None]).astype(F32)
+            p = self._pos[sel]
+            on = p >= 0
+            halo_disc[p[on]] = halo[on]
+            flat[sel[~on], :3] = halo[~on]
+        st["halo_disc"] = halo_disc if self.atm is not None else None
+        flat[g.idx, 3] = g.cover
         if self.rings:
-            out.update(self._ring_layer(L))
-        if len(self._lcache) > 4:
-            self._lcache.clear()
-        self._lcache[key] = out
-        return out
+            self._prep_rings(L, st, flat)
+        self.st = st
 
-    def _ring_layer(self, L):
+    def _prep_rings(self, L, st, flat):
         g = self.geo
         M = self.M
         c0, c2 = M[:, 0], M[:, 2]
         det = c0[0] * c2[1] - c2[0] * c0[1]
         X = (g.X * c2[1] - g.Y * c2[0]) / det
         Z = (c0[0] * g.Y - c0[1] * g.X) / det
-        zv = c0[2] * X + c2[2] * Z                       # 環の点の手前方向の深さ
+        zv = c0[2] * X + c2[2] * Z                            # 環の点の手前方向の深さ
         r = np.sqrt(X * X + Z * Z)
         n = len(self.ring_op)
         ri = (r - _RING_IN) / (_RING_OUT - _RING_IN) * (n - 1)
         inside = (ri >= 0) & (ri <= n - 1)
         ri_c = np.clip(ri, 0, n - 1)
-        op = np.interp(ri_c, np.arange(n), self.ring_op).astype(F32) * inside
-        col = np.stack([np.interp(ri_c, np.arange(n), self.ring_col[:, c]) for c in range(3)], -1).astype(F32)
+        ar = np.arange(n)
+        op = (np.interp(ri_c, ar, self.ring_op) * inside).astype(F32)
+        col = np.stack([np.interp(ri_c, ar, self.ring_col[:, c]) for c in range(3)], -1).astype(F32)
         Lp = M.T @ L
         Vp = M.T @ np.array([0, 0, 1], F32)
-        light = 0.2 + 0.8 * abs(Lp[1]) ** 0.5
-        if Lp[1] * Vp[1] < 0:                            # 太陽と反対側(裏面)から見ている
-            light *= 0.35
-        # 惑星の影(環の上)
+        light = 0.35 + 0.75 * abs(float(Lp[1])) ** 0.5
+        if Lp[1] * Vp[1] < 0:                                 # 太陽と反対側(裏面)から見ている
+            light *= 0.4
         P = np.stack([g.X, g.Y, zv], axis=-1)
         pl = P @ L
         perp2 = (P * P).sum(-1) - pl * pl
         shadow = np.where((pl < 0) & (perp2 < 1.0), 1.0 - _smooth(1.0, 0.94, perp2) * 0.92, 1.0)
-        rgb = col * (light * shadow)[..., None] * op[..., None]
+        rr = (col * (light * shadow)[..., None] * op[..., None]).reshape(-1, 3)
+        ra = op.ravel()
+        # 円盤外: 環を大気の光の上に重ねた状態を固定で持つ
+        outside = self._pos < 0
+        flat[outside, :3] = rr[outside] + (1.0 - ra[outside])[:, None] * flat[outside, :3]
+        flat[outside, 3] = ra[outside]
+        # 円盤内: 環が惑星より手前か
+        idx = g.idx
+        front = zv.ravel()[idx] > g.nz
+        st["ring_rgb"], st["ring_a"], st["ring_front"] = rr[idx], ra[idx], front
+        cov = g.cover
+        flat[idx, 3] = np.where(front, ra[idx] + (1 - ra[idx]) * cov, cov + (1 - cov) * ra[idx])
         # 環の影(惑星の上): 地表の点から太陽へ向かう光線が環の面を横切る位置
         npl = g.npl
-        Ly = Lp[1] if abs(Lp[1]) > 1e-4 else 1e-4
+        Ly = float(Lp[1]) if abs(float(Lp[1])) > 1e-4 else 1e-4
         tpar = -npl[1] / Ly
         hx = npl[0] + tpar * Lp[0]
         hz = npl[2] + tpar * Lp[2]
         hr = np.sqrt(hx * hx + hz * hz)
         hri = np.clip((hr - _RING_IN) / (_RING_OUT - _RING_IN) * (n - 1), 0, n - 1)
-        hop = np.interp(hri, np.arange(n), self.ring_op) * ((hr >= _RING_IN) & (hr <= _RING_OUT)) * (tpar > 0)
-        ring_shadow = (1.0 - 0.85 * hop).astype(F32)
-        # 惑星より手前か(円盤内の画素のみ判定)
-        front = np.ones(g.X.shape, bool)
-        front_flat = front.ravel()
-        front_flat[g.idx] = zv.ravel()[g.idx] > g.nz
-        return {"ring_rgb": rgb.astype(F32), "ring_a": op, "ring_front": front, "ring_shadow": ring_shadow}
+        hop = np.interp(hri, ar, self.ring_op) * ((hr >= _RING_IN) & (hr <= _RING_OUT)) * (tpar > 0)
+        st["ring_shadow"] = (1.0 - 0.85 * hop).astype(F32)
 
-    def render_sprite(self, t: float, orbit_deg: float):
+    def _shade(self, sl, L, surf, gb, ca, em):
+        g, st = self.geo, self.st
+        alb = surf[:, :3].astype(F32) * F32(1 / 255.0)
+        ndl_g = st["ndl_g"][sl]
+        gate = st["gate"][sl]
+        if gb is not None:
+            n = g.n[:, sl] - F32(self.bump_k) * (gb[:, 0] * g.east[:, sl] + gb[:, 1] * g.north[:, sl])
+            inv = 1.0 / np.sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2])
+            n *= inv
+            ndl = L[0] * n[0] + L[1] * n[1] + L[2] * n[2]
+        else:
+            n = None
+            ndl = ndl_g
+        soft = self.soft
+        dif = np.clip((ndl + soft) / (1.0 + soft), 0, 1) * gate
+        if self.lommel > 0:
+            ndp = np.maximum(ndl, 0)
+            ls = 2.0 * ndp / (ndp + np.maximum(g.nz[sl], 0.05))
+            dif = dif + (np.clip(ls, 0, 1.6) * gate * 0.62 - dif) * F32(self.lommel)
+        light = np.sqrt(np.clip(dif, 0, 1))
+        col = alb * (F32(_AMB) + light)[:, None]
+        if self.limb_f is not None:
+            col *= self.limb_f[sl][:, None]
+        a = None
+        if ca is not None:
+            a = ca[:, 0].astype(F32) * F32(1 / 255.0)
+            cl = (a * (F32(_AMB) + st["light_g"][sl] * 1.02))[:, None] * self.cloud_col[None, :]
+            col = col * (1.0 - a)[:, None] + cl
+        spec = surf[:, 3]
+        m = (spec > 2) & (ndl_g > 0)
+        if m.any():
+            Hh = st["H"]
+            if n is not None:
+                nh = Hh[0] * n[0][m] + Hh[1] * n[1][m] + Hh[2] * n[2][m]
+            else:
+                nn = g.n[:, sl]
+                nh = Hh[0] * nn[0][m] + Hh[1] * nn[1][m] + Hh[2] * nn[2][m]
+            nh = np.clip(nh, 0, 1)
+            sp = spec[m].astype(F32) * F32(1 / 255.0) * (0.32 * nh ** 110 + 0.05 * nh ** 14)
+            if a is not None:
+                sp *= 1.0 - a[m]
+            col[m] += sp[:, None] * np.array([1.0, 0.93, 0.8], F32)
+        if em is not None:
+            vis = st["emis_vis"][sl]
+            if a is not None:
+                vis = vis * (1.0 - 0.75 * a)
+            col += em.astype(F32) * (vis * F32(1 / 255.0))[:, None]
+        if self.atm is not None:
+            hz = st["haze"][sl]
+            col = col * (1.0 - hz)[:, None] + (hz[:, None] + st["rim"][sl][:, None]) * self.atm[None, :]
+        col = _tonemap(col)
+        if self.rings:
+            col *= st["ring_shadow"][sl][:, None]
+        cov = g.cover[sl]
+        col *= cov[:, None]
+        if st["halo_disc"] is not None:
+            col += st["halo_disc"][sl]
+        if self.rings:
+            rr, ra, fr = st["ring_rgb"][sl], st["ring_a"][sl], st["ring_front"][sl]
+            over = rr + (1.0 - ra)[:, None] * col
+            under = col + (1.0 - cov)[:, None] * rr
+            col = np.where(fr[:, None], over, under)
+        return col
+
+    def render_sprite(self, t: float, orbit_deg: float) -> np.ndarray:
         g = self.geo
         L = np.asarray(sun_vector(self.sun_angle, self.sun_elevation, orbit_deg), F32)
-        soft, limb, bump_k, lommel = _KIND_SHADE[self.kind]
+        self._prep_light(L)
         lon_off = self.longitude - math.radians(self.rotation_speed * t) + math.radians(orbit_deg)
         tex = self.tex
-        surf = g.sample(tex.surface, lon_off).astype(F32) * F32(1 / 255.0)
-        alb, spec = surf[:, :3], surf[:, 3]
-        n = g.n
-        if tex.bump is not None and bump_k > 0:
-            gb = g.sample(tex.bump, lon_off)
-            n = n - F32(bump_k) * (gb[:, 0][None, :] * g.east + gb[:, 1][None, :] * g.north)
-            n = n / np.sqrt((n * n).sum(0, keepdims=True))
-        ndl_g = L[0] * g.n[0] + L[1] * g.n[1] + L[2] * g.n[2]
-        ndl = L[0] * n[0] + L[1] * n[1] + L[2] * n[2]
-        geo_gate = np.clip(ndl_g * 6.0 + 0.4, 0, 1)
-        dif = np.clip((ndl + soft) / (1.0 + soft), 0, 1) * geo_gate
-        if lommel > 0:
-            ls = 2.0 * np.maximum(ndl, 0) / (np.maximum(ndl, 0) + np.maximum(g.nz, 0.05))
-            dif = _mix(dif, np.clip(ls, 0, 1.6) * geo_gate * 0.62, F32(lommel))
-        light = np.power(np.maximum(dif, 0), F32(1 / 2.2))
-        amb = F32(0.012)
-        col = alb * (amb + light)[:, None]
-        if limb > 0:
-            col *= (1.0 - limb + limb * np.power(g.nz, F32(0.45)))[:, None]
-        dif_g = np.clip((ndl_g + 0.08) / 1.08, 0, 1)
-        light_g = np.power(dif_g, F32(1 / 2.2))
-        ca = None
-        if tex.clouds is not None:
-            ca = g.sample(tex.clouds, lon_off * self.cloud_speed).astype(F32)[:, 0] * F32(1 / 255.0)
-            cc = _rgb(self.pr["colors"].get("cloud", "#ffffff"))
-            col = col * (1.0 - ca)[:, None] + (ca * (amb + light_g * 1.02))[:, None] * cc[None, :]
-        if spec.any():
-            H = L + np.array([0, 0, 1], F32)
-            H = H / np.linalg.norm(H)
-            nh = np.clip(H[0] * n[0] + H[1] * n[1] + H[2] * n[2], 0, 1)
-            sp = spec * (0.55 * nh ** 90 + 0.06 * nh ** 12) * (ndl_g > 0)
-            if ca is not None:
-                sp = sp * (1.0 - ca)
-            col += (sp[:, None] * np.array([1.0, 0.95, 0.85], F32))
-        if tex.emission is not None:
-            em = g.sample(tex.emission, lon_off).astype(F32) * F32(1 / 255.0)
-            night = 1.0 - _smooth(-0.1, 0.12, ndl_g)
-            vis = night + tex.emission_day * (1.0 - night)
-            if ca is not None:
-                vis = vis * (1.0 - 0.75 * ca)
-            col += em * vis[:, None]
-        if self.atm is not None:
-            s = self.atm_strength
-            rim = np.power(1.0 - g.nz, F32(2.2)) * np.clip(ndl_g * 0.8 + 0.35 + max(0.0, -L[2]) * 0.6, 0, 1)
-            haze = s * 0.35 * np.power(1.0 - g.nz, F32(1.5)) * light_g
-            col = col * (1.0 - haze)[:, None] + (haze[:, None] * self.atm[None, :])
-            col += (rim * s * 0.75)[:, None] * self.atm[None, :]
-        col = _tonemap(col)
-        Hs, Ws = g.H, g.W
-        rgb = np.zeros((Hs * Ws, 3), F32)
-        alpha = np.zeros(Hs * Ws, F32)
-        cov = g.cover
-        layers = self._static_layers(L)
-        if self.rings:
-            col = col * layers["ring_shadow"][:, None]
-        rgb[g.idx] = col * cov[:, None]
-        alpha[g.idx] = cov
-        if "halo" in layers:
-            rgb[layers["halo_idx"]] += layers["halo"]
-        rgb = rgb.reshape(Hs, Ws, 3)
-        alpha = alpha.reshape(Hs, Ws)
-        if self.rings:
-            rr, ra, front = layers["ring_rgb"], layers["ring_a"], layers["ring_front"]
-            over_rgb = rr + (1 - ra)[..., None] * rgb             # 環が手前
-            over_a = ra + (1 - ra) * alpha
-            under_rgb = rgb + (1 - alpha)[..., None] * rr          # 惑星が手前
-            under_a = alpha + (1 - alpha) * ra
-            rgb = np.where(front[..., None], over_rgb, under_rgb)
-            alpha = np.where(front, over_a, under_a)
-        return rgb, alpha
+        surf = g.sample(tex.surface, lon_off)
+        surf_lo = g.sample(tex.surface_lo, lon_off) if tex.surface_lo is not tex.surface else None
+        gb = g.sample(tex.bump, lon_off) if (tex.bump is not None and self.bump_k > 0) else None
+        ca = g.sample(tex.clouds, lon_off * self.cloud_speed) if tex.clouds is not None else None
+        em = g.sample(tex.emission, lon_off) if tex.emission is not None else None
+        N = len(g.idx)
+        out = np.empty((N, 3), F32)
+
+        def work(sl):
+            sf = surf[sl]
+            if surf_lo is not None:
+                w = g.lo_w[sl][:, None]
+                sf = sf.astype(F32) + (surf_lo[sl].astype(F32) - sf) * w
+            out[sl] = self._shade(sl, L, sf, None if gb is None else gb[sl],
+                                  None if ca is None else ca[sl], None if em is None else em[sl])
+
+        _parallel(work, N, 30000)
+        self.buf.reshape(-1, 4)[g.idx, :3] = out
+        return self.buf
 
     def draw(self, img, t, s, ox, oy, orbit_deg):
         H, W = img.shape[:2]
         cx = W / 2.0 + s * (self.center[0] * W - W / 2.0) + ox * W
         cy = H / 2.0 + s * (self.center[1] * H - H / 2.0) + oy * H
         k = (self.R0 * s) / self.Rs
-        rgb, alpha = self.render_sprite(t, orbit_deg)
-        _place_sprite(img, rgb, alpha, cx, cy, k, self.half_w, self.half_h)
+        buf = self.render_sprite(t, orbit_deg)
+        _place_sprite(img, buf, cx, cy, k, self.half_w, self.half_h)
 
 
 # ================================================================ 太陽
 
 class SunBody:
-    def __init__(self, color, activity, diameter_px, center, rotation_speed, seed, s_max, frame_h):
+    """太陽(恒星): 周縁減光・粒状斑(ゆらぐ)・黒点・白斑・プロミネンス・コロナ・にじみ。"""
+
+    def __init__(self, color, activity, diameter_px, center, rotation_speed, seed, s_max):
         self.base = _rgb(color)
         self.activity = activity
         self.R0 = diameter_px / 2.0
         self.center = center
         self.rotation_speed = rotation_speed
-        self.s_max = s_max
         Rr = min(self.R0 * s_max, 2400.0)
         self.Rs = Rr
         self.half = int(math.ceil(Rr * 1.16)) + 2
         M = (_rot_z(math.radians(-7.25)) @ _rot_x(math.radians(4.0))).astype(F32)
-        self.geo = _SphereGeom(Rr, self.half, self.half, M)
+        g = self.geo = _SphereGeom(Rr, self.half, self.half, M)
         tw = 512
         while tw < TAU * Rr * 0.9 and tw < 2048:
             tw *= 2
         self.tex = self._texture(tw, seed, activity)
-        self.center_col = _mix(self.base, np.ones(3, F32), F32(0.62)) * F32(1.3)
-        self.limb_col = np.power(self.base, F32(1.8)) * F32(0.95)
-        self._prom = self._prominences(seed)
+        center_col = _mix(self.base, np.ones(3, F32), F32(0.5)) * F32(1.08)
+        mid_col = self.base * F32(1.12)
+        limb_col = np.power(self.base, F32(2.6)) * F32(0.95)
+        mu = g.nz
+        m = np.power(mu, F32(0.7))[:, None]
+        c = np.where(m < 0.5, _mix(limb_col[None, :], mid_col[None, :], m * 2.0),
+                     _mix(mid_col[None, :], center_col[None, :], (m - 0.5) * 2.0))
+        self.limb_i = (0.62 + 0.38 * np.power(mu, F32(0.5))).astype(F32)
+        self.limb_c = c.astype(F32)
+        self.fac_w = (0.3 * np.power(1.0 - mu, F32(0.6))).astype(F32)
+        self.buf = np.zeros((g.H, g.W, 4), F32)
+        flat = self.buf.reshape(-1, 4)
+        sel, pc = self._prominences(seed)
+        flat[sel, :3] = pc
+        flat[g.idx, 3] = g.cover
+        pos = np.full(g.H * g.W, -1, np.int64)
+        pos[g.idx] = np.arange(len(g.idx))
+        p = pos[sel]
+        self.prom_disc = np.zeros((len(g.idx), 3), F32)
+        self.prom_disc[p[p >= 0]] = pc[p >= 0]
         rng = np.random.default_rng(seed + 55)
         self._streamer = rng.random(48).astype(F32)
         self._streamer2 = rng.random(48).astype(F32)
-        self._frame_h = frame_h
+        self._corona_key = None
 
     def _texture(self, tw, seed, activity):
         rng = np.random.default_rng(seed + 500)
-        ga = sphere_fbm(tw, 60.0, 2, seed + 1, gain=0.45)
-        gb = sphere_fbm(tw, 60.0, 2, seed + 2, gain=0.45)
-        sup = sphere_fbm(tw, 9.0, 3, seed + 3)
+        ga = sphere_fbm(tw, 55.0, 2, seed + 1, gain=0.45)
+        gb = sphere_fbm(tw, 55.0, 2, seed + 2, gain=0.45)
+        sup = sphere_fbm(tw, 8.0, 3, seed + 3)
         ga = _smooth(0.3, 0.7, ga) * 0.75 + 0.25 * sup
         gb = _smooth(0.3, 0.7, gb) * 0.75 + 0.25 * sup
         spots = np.zeros((tw // 2, tw), F32)
@@ -1182,8 +1318,7 @@ class SunBody:
                 pen = _smooth(1.0, 0.8, x)
                 spots = np.maximum(spots, np.maximum(umbra * 0.92, pen * 0.5))
                 fac = np.maximum(fac, _smooth(3.5, 1.2, x) * (1 - pen))
-        tex = np.dstack([_u8(ga), _u8(gb), _u8(spots), _u8(fac)])
-        return tex
+        return np.dstack([_u8(ga), _u8(gb), _u8(spots), _u8(fac)])
 
     def _prominences(self, seed):
         """縁から立ちのぼるプロミネンス(極座標のノイズ)。スプライト上に固定で持つ。"""
@@ -1204,28 +1339,26 @@ class SunBody:
     def render_sprite(self, t, orbit_deg=0.0):
         g = self.geo
         lon_off = -math.radians(self.rotation_speed * t) + math.radians(orbit_deg)
-        s = g.sample(self.tex, lon_off).astype(F32) * F32(1 / 255.0)
-        s2 = g.sample(self.tex, lon_off * 1.35 + 0.02 * t).astype(F32) * F32(1 / 255.0)
-        wv = 0.5 + 0.5 * math.sin(TAU * t / 7.0)
-        gran = s2[:, 0] * wv + s2[:, 1] * (1 - wv)
-        spot, fac = s[:, 2], s[:, 3]
-        mu = g.nz
-        limb = 1.0 - 0.62 * (1.0 - mu) - 0.2 * (1.0 - mu * mu)
-        c = _mix(self.limb_col[None, :], self.center_col[None, :], np.power(mu, F32(0.55))[:, None])
-        inten = limb * (0.8 + 0.36 * gran) * (1.0 - 0.88 * spot) + 0.35 * fac * np.power(1 - mu, F32(0.6))
-        col = _tonemap(c * inten[:, None])
-        Hs = Ws = 2 * self.half
-        rgb = np.zeros((Hs * Ws, 3), F32)
-        alpha = np.zeros(Hs * Ws, F32)
-        rgb[g.idx] = col * g.cover[:, None]
-        alpha[g.idx] = g.cover
-        sel, pc = self._prom
-        flick = 0.9 + 0.1 * math.sin(t * 1.7)
-        rgb[sel] += pc * flick * (1.0 - alpha[sel])[:, None]
-        return rgb.reshape(Hs, Ws, 3), alpha.reshape(Hs, Ws)
+        s1 = g.sample(self.tex, lon_off)
+        s2 = g.sample(self.tex, lon_off * 1.35 + 0.02 * t)
+        wv = F32(0.5 + 0.5 * math.sin(TAU * t / 7.0))
+        N = len(g.idx)
+        out = np.empty((N, 3), F32)
 
-    def corona(self, img, cx, cy, R, t):
-        """コロナ(外側の光)を1/4解像度で計算して足す。"""
+        def work(sl):
+            a, b = s1[sl].astype(F32) * F32(1 / 255.0), s2[sl].astype(F32) * F32(1 / 255.0)
+            gran = b[:, 0] * wv + b[:, 1] * (1 - wv)
+            inten = self.limb_i[sl] * (0.86 + 0.26 * gran) * (1.0 - 0.9 * a[:, 2]) + self.fac_w[sl] * a[:, 3]
+            c = _tonemap(self.limb_c[sl] * inten[:, None])
+            cov = g.cover[sl]
+            out[sl] = c * cov[:, None] + self.prom_disc[sl] * (1.0 - cov)[:, None]
+
+        _parallel(work, N, 30000)
+        self.buf.reshape(-1, 4)[g.idx, :3] = out
+        return self.buf
+
+    def corona(self, img, cx, cy, R):
+        """コロナ(外側の光)を1/4解像度で計算して足す。位置と大きさが同じなら使い回す。"""
         H, W = img.shape[:2]
         ds = 4
         ext = R * 4.5
@@ -1233,39 +1366,51 @@ class SunBody:
         x1, y1 = min(W, int(cx + ext)), min(H, int(cy + ext))
         if x1 - x0 < ds or y1 - y0 < ds:
             return
-        sw, sh = max(2, (x1 - x0) // ds), max(2, (y1 - y0) // ds)
-        xs = x0 + (np.arange(sw, dtype=F32) + 0.5) * ((x1 - x0) / sw) - cx
-        ys = y0 + (np.arange(sh, dtype=F32) + 0.5) * ((y1 - y0) / sh) - cy
-        X, Y = np.meshgrid(xs / F32(R), ys / F32(R))
-        d = np.maximum(np.sqrt(X * X + Y * Y), F32(1e-3))
-        e = np.maximum(d - 1.0, 0)
-        ang = (np.arctan2(Y, X) + math.pi) / TAU * 48 + 0.05 * t
-        st = np.interp(ang.ravel() % 48, np.arange(49), np.r_[self._streamer, self._streamer[:1]]).reshape(ang.shape)
-        st2 = np.interp((ang.ravel() * 2.7 + 13) % 48, np.arange(49), np.r_[self._streamer2, self._streamer2[:1]]).reshape(ang.shape)
-        a = self.activity
-        streak = 1.0 + a * 1.2 * (st ** 3 - 0.25) * _smooth(0.0, 0.6, e) + 0.35 * a * (st2 ** 4) * _smooth(0.0, 0.3, e)
-        glow = 0.75 * np.exp(-e / 0.035) + 0.3 * np.exp(-e / 0.22) * streak + 0.085 * np.exp(-e / 1.1) * streak
-        glow *= _smooth(4.5, 3.2, d)                       # 計算範囲の端で切れないよう減衰
-        col = _mix(self.base, np.ones(3, F32), F32(0.35))
-        layer = glow[..., None] * col[None, None, :]
-        layer = cv2.resize(layer, (x1 - x0, y1 - y0), interpolation=cv2.INTER_LINEAR)
-        img[y0:y1, x0:x1] = cv2.add(img[y0:y1, x0:x1], _u8(np.clip(layer, 0, 1)))
+        key = (round(cx, 2), round(cy, 2), round(R, 2), W, H)
+        if key != self._corona_key:
+            sw, sh = max(2, (x1 - x0) // ds), max(2, (y1 - y0) // ds)
+            xs = x0 + (np.arange(sw, dtype=F32) + 0.5) * ((x1 - x0) / sw) - cx
+            ys = y0 + (np.arange(sh, dtype=F32) + 0.5) * ((y1 - y0) / sh) - cy
+            X, Y = np.meshgrid(xs / F32(R), ys / F32(R))
+            d = np.maximum(np.sqrt(X * X + Y * Y), F32(1e-3))
+            e = np.maximum(d - 1.0, 0)
+            ang = (np.arctan2(Y, X) + math.pi) / TAU * 48
+            st = np.interp(ang.ravel() % 48, np.arange(49),
+                           np.r_[self._streamer, self._streamer[:1]]).reshape(ang.shape)
+            st2 = np.interp((ang.ravel() * 2.7 + 13) % 48, np.arange(49),
+                            np.r_[self._streamer2, self._streamer2[:1]]).reshape(ang.shape)
+            a = self.activity
+            streak = 1.0 + a * 1.2 * (st ** 3 - 0.25) * _smooth(0.0, 0.6, e) + \
+                0.35 * a * (st2 ** 4) * _smooth(0.0, 0.3, e)
+            glow = 0.32 * np.exp(-e / 0.05) + 0.2 * np.exp(-e / 0.3) * streak + \
+                0.07 * np.exp(-e / 1.2) * streak
+            glow *= _smooth(4.5, 3.2, d)                       # 計算範囲の端で切れないよう減衰
+            col = _mix(self.base, np.ones(3, F32), F32(0.25))
+            layer = _u8(glow[..., None] * col[None, None, :])        # 8bitにしてから拡大(速い)
+            self._corona = cv2.resize(layer, (x1 - x0, y1 - y0), interpolation=cv2.INTER_LINEAR)
+            self._corona_key = key
+        img[y0:y1, x0:x1] = cv2.add(img[y0:y1, x0:x1], self._corona)
 
     def draw(self, img, t, s, ox, oy, orbit_deg):
         H, W = img.shape[:2]
         cx = W / 2.0 + s * (self.center[0] * W - W / 2.0) + ox * W
         cy = H / 2.0 + s * (self.center[1] * H - H / 2.0) + oy * H
         R = self.R0 * s
-        self.corona(img, cx, cy, R, t)
-        rgb, alpha = self.render_sprite(t, orbit_deg)
-        _place_sprite(img, rgb, alpha, cx, cy, R / self.Rs, self.half, self.half)
-        _bloom(img, (cx - R * 1.6, cy - R * 1.6, cx + R * 1.6, cy + R * 1.6), 0.8, 0.35)
+        self.corona(img, cx, cy, R)
+        buf = self.render_sprite(t, orbit_deg)
+        _place_sprite(img, buf, cx, cy, R / self.Rs, self.half, self.half)
+        _bloom(img, (cx - R * 1.6, cy - R * 1.6, cx + R * 1.6, cy + R * 1.6), 0.82, 0.3)
 
 
 # ================================================================ ブラックホール
 
 class BlackHoleBody:
-    """シャドウ・降着円盤(ドップラー非対称)・光子リング・裏側円盤の重力レンズ像(簡略)。"""
+    """シャドウ・降着円盤(ドップラー非対称)・光子リング・裏側円盤の重力レンズ像(簡略)。
+
+    実際の光線追跡はせず、Interstellar風の見た目を2Dの写像で近似している:
+      円盤は傾いた平面の楕円 / シャドウの上下の光の輪は「裏側の円盤が曲がって見えた像」を
+      半径方向の写像で描く / 背景の星空は点質量レンズの式で歪ませる
+    """
 
     R_IN, R_OUT = 1.45, 4.3            # 円盤の内縁・外縁(シャドウ半径単位)
     THETA_E = 1.6                      # 背景の重力レンズのアインシュタイン半径(シャドウ半径単位)
@@ -1290,108 +1435,106 @@ class BlackHoleBody:
         ys = (self.half_h - (np.arange(H, dtype=F32) + 0.5)) / F32(Rr)
         X, Y = np.meshgrid(xs, ys)
         c, s = math.cos(-self.roll), math.sin(-self.roll)
-        Xu, Yu = X * c - Y * s, X * s + Y * c                 # 画面内の傾きを戻した座標
+        Xu, Yu = (X * c - Y * s).ravel(), (X * s + Y * c).ravel()   # 画面内の傾きを戻した座標
         self.W, self.H = W, H
         rho = np.sqrt(Xu * Xu + Yu * Yu)
-        self.rho = rho
-        self.shadow_a = np.clip((1.0 - rho) * F32(Rr) + 0.5, 0, 1)
-        # 円盤(平面)
+        self.tex = self._disk_texture(seed)
+        # 円盤(平面): 画面の点 → 円盤面の (半径, 角度)。角度0=右 / 90度=奥
         Yd = Yu / F32(math.sin(self.e))
         r = np.sqrt(Xu * Xu + Yd * Yd)
         phi = np.arctan2(Yd, Xu)
-        dsel = np.flatnonzero(((r > self.R_IN * 0.95) & (r < self.R_OUT)).ravel())
-        self.disk_idx = dsel
-        self.disk_r = r.ravel()[dsel]
-        self.disk_phi = phi.ravel()[dsel]
-        self.disk_near = (Yu.ravel()[dsel] < 0)
+        dsel = np.flatnonzero((r > self.R_IN * 0.95) & (r < self.R_OUT))
+        near = Yu[dsel] < 0
+        self.far_idx, self.near_idx = dsel[~near], dsel[near]
+        self.far = self._disk_consts(r[dsel][~near], phi[dsel][~near], np.cos(phi[dsel][~near]))
+        self.near = self._disk_consts(r[dsel][near], phi[dsel][near], np.cos(phi[dsel][near]))
         # 裏側の円盤のレンズ像(シャドウの上下を回り込む光の輪)
-        hsel = np.flatnonzero(((rho > 0.98) & (rho < 2.35)).ravel())
-        rh = rho.ravel()[hsel]
-        ps = np.arctan2(Yu.ravel()[hsel], Xu.ravel()[hsel])
+        hsel = np.flatnonzero((rho > 0.98) & (rho < 2.35))
+        rh = rho[hsel]
+        ps = np.arctan2(Yu[hsel], Xu[hsel])
         top = ps > 0
         rd = np.where(top, self.R_IN + (rh - 1.07) / 0.3, self.R_IN + (rh - 1.04) / 0.17)
+        wt = np.where(top, 1.25 * _smooth(0.0, 0.5, np.sin(ps)), 0.75 * _smooth(0.0, 0.5, -np.sin(ps)))
+        wt = wt * _smooth(0.99, 1.08, rh)
         self.halo_idx = hsel
-        self.halo_r = rd.astype(F32)
-        self.halo_phi = np.abs(ps).astype(F32)
-        wt = np.where(top, _smooth(0.0, 0.55, np.sin(ps)), 0.6 * _smooth(0.0, 0.55, -np.sin(ps)))
-        self.halo_w = (wt * _smooth(0.99, 1.08, rh)).astype(F32)
-        self.halo_cos = np.cos(ps).astype(F32)
-        # 光子リング
-        psel = np.flatnonzero(((rho > 0.96) & (rho < 1.1)).ravel())
+        self.halo = self._disk_consts(rd, np.abs(ps), np.cos(ps), weight=wt)
+        # シャドウ(黒)と光子リング
+        sa = np.clip((1.0 - rho) * F32(Rr) + 0.5, 0, 1).astype(F32)
+        self.sh_idx = np.flatnonzero(sa > 0)
+        self.sh_a = sa[self.sh_idx]
+        psel = np.flatnonzero((rho > 0.96) & (rho < 1.1))
+        pr = rho[psel]
+        pcos = Xu[psel] / np.maximum(pr, 1e-6)
+        ring = np.exp(-((pr - 1.025) / 0.014) ** 2)
+        base = self._colorize(np.ones(len(psel), F32), np.ones(len(psel), F32), pcos.astype(F32))
         self.ring_idx = psel
-        pr = rho.ravel()[psel]
-        pcos = Xu.ravel()[psel] / np.maximum(pr, 1e-6)
-        self.ring_val = (np.exp(-((pr - 1.025) / 0.014) ** 2) * (1.0 - 0.5 * pcos)).astype(F32)
-        self.tex = self._disk_texture(seed)
+        self.ring_rgb = (base * (ring * 0.9)[:, None]).astype(F32)
+        self.touched = np.unique(np.concatenate([dsel, hsel, self.sh_idx, psel]))
 
     def _disk_texture(self, seed, nr=384, nphi=2048):
         r = np.linspace(self.R_IN * 0.95, self.R_OUT, nr, dtype=F32)[:, None]
         ph = (np.arange(nphi, dtype=F32) / nphi * TAU)[None, :]
         out = np.zeros((nr, nphi), F32)
         norm = 0
-        for k, (A, B, amp) in enumerate(((2.0, 14.0, 1.0), (4.0, 36.0, 0.7), (9.0, 90.0, 0.45),
-                                         (14.0, 14.0, 0.35))):
+        for k, (A, B, amp) in enumerate(((2.0, 6.0, 1.0), (4.0, 16.0, 0.8), (9.0, 32.0, 0.55),
+                                         (16.0, 12.0, 0.5), (28.0, 28.0, 0.35), (6.0, 70.0, 0.2))):
             p = np.stack(np.broadcast_arrays(np.cos(ph) * A, np.sin(ph) * A, r * B), -1).astype(F32)
             out += amp * vnoise3(p, seed + 70 + k)
             norm += amp
         out /= norm
-        return np.clip(0.5 + 1.6 * (out - 0.5), 0.05, 1.0).astype(F32)
+        return np.clip(0.5 + 1.7 * (out - 0.5), 0.04, 1.0).astype(F32)
 
-    def _disk_sample(self, r, phi, t, orbit_deg):
-        nr, nphi = self.tex.shape
-        om = 0.55 * self.spin * (self.R_IN / np.maximum(r, self.R_IN)) ** 1.5
-        ph = (phi - om * t + math.radians(orbit_deg)) / TAU
-        ph -= np.floor(ph)
-        mx = ph * nphi - 0.5
-        my = np.clip((r - self.R_IN * 0.95) / (self.R_OUT - self.R_IN * 0.95) * (nr - 1), 0, nr - 1)
-        v = remap_flat(self.tex, mx, my)[:, 0]
-        prof = np.power(self.R_IN / np.maximum(r, 1e-3), F32(1.5)) * _smooth(self.R_IN * 0.96, self.R_IN * 1.12, r) \
-            * (1.0 - _smooth(self.R_OUT * 0.7, self.R_OUT, r))
+    def _disk_consts(self, r, phi, cosv, weight=None):
+        """円盤の画素ごとの固定値(テクスチャ座標・明るさの形・色)を前計算。"""
+        r = r.astype(F32)
+        prof = np.power(self.R_IN / np.maximum(r, 1e-3), F32(1.15)) * \
+            _smooth(self.R_IN * 0.96, self.R_IN * 1.12, r) * (1.0 - _smooth(self.R_OUT * 0.6, self.R_OUT, r))
+        if weight is not None:
+            prof = prof * weight
         temp = np.clip(np.power(self.R_IN / np.maximum(r, 1e-3), F32(0.9)), 0, 1)
-        return v * prof, temp
+        nr, nphi = self.tex.shape
+        my = np.clip((r - self.R_IN * 0.95) / (self.R_OUT - self.R_IN * 0.95) * (nr - 1), 0, nr - 1)
+        om = 0.55 * self.spin * np.power(self.R_IN / np.maximum(r, self.R_IN), F32(1.5))
+        return {"my": my.astype(F32), "phi": phi.astype(F32), "om": om.astype(F32),
+                "prof": prof.astype(F32),
+                "K": self._colorize(prof.astype(F32), temp.astype(F32), cosv.astype(F32))}
 
     def _colorize(self, inten, temp, cosv):
-        """強さ・温度・ドップラー(cosv: 画面の右=+1, 左=-1)から色を作る。左が近づく側で明るい。"""
+        """強さ・温度・ドップラー(cosv: 画面の右=+1, 左=-1)から色。左が近づく側で明るく青白い。"""
         dop = np.power(1.0 + 0.55 * (-cosv), F32(2.0))
-        hot = _mix(self.col, np.ones(3, F32), F32(0.7)) * F32(1.5)
-        cold = np.power(self.col, F32(1.4)) * F32(0.9)
-        c = _mix(cold[None, :], hot[None, :], temp[:, None])
-        c = _mix(c, np.array([0.85, 0.9, 1.0], F32)[None, :] * c.max(1, keepdims=True),
-                 (np.clip(-cosv, 0, 1) * 0.25)[:, None])
-        return c * (inten * dop)[:, None] * F32(1.25)
+        hot = _mix(self.col, np.ones(3, F32), F32(0.3)) * F32(1.2)
+        cold = np.power(self.col, F32(1.8)) * F32(0.8)
+        c = _mix(cold[None, :], hot[None, :], np.power(temp, F32(1.5))[:, None])
+        c = _mix(c, np.array([0.9, 0.93, 1.0], F32)[None, :] * c.max(1, keepdims=True),
+                 (np.clip(-cosv, 0, 1) * 0.22)[:, None])
+        return (c * (inten * dop)[:, None] * F32(1.7)).astype(F32)
+
+    def _sample(self, C, t, orbit_deg):
+        nr, nphi = self.tex.shape
+        ph = (C["phi"] - C["om"] * F32(t) + F32(math.radians(orbit_deg))) * F32(1 / TAU)
+        ph -= np.floor(ph)
+        return remap_flat(self.tex, ph * nphi - 0.5, C["my"])[:, 0]
 
     def render_sprite(self, t, orbit_deg):
-        W, H = self.W, self.H
-        rgb = np.zeros((H * W, 3), F32)
-        a = np.zeros(H * W, F32)
-        # 円盤(奥半分)
-        inten, temp = self._disk_sample(self.disk_r, self.disk_phi, t, orbit_deg)
-        cosv = np.cos(self.disk_phi).astype(F32)
-        dcol = self._colorize(inten, temp, cosv)
-        da = np.clip(inten * 2.2, 0, 0.93)
-        far = ~self.disk_near
-        fi = self.disk_idx[far]
-        rgb[fi] = dcol[far] * da[far][:, None] / np.maximum(da[far], 1e-3)[:, None]
-        a[fi] = da[far]
-        # レンズ像の輪(加算)
-        hi, hth = self._disk_sample(self.halo_r, self.halo_phi, t, orbit_deg)
-        hc = self._colorize(hi * self.halo_w, hth, self.halo_cos)
-        rgb[self.halo_idx] += hc
-        # シャドウ(黒で覆う)
-        sa = self.shadow_a.ravel()
-        rgb *= (1.0 - sa)[:, None]
-        a = sa + (1.0 - sa) * a
-        # 光子リング
-        base = self._colorize(np.full(len(self.ring_idx), 1.0, F32), np.full(len(self.ring_idx), 1.0, F32),
-                              np.zeros(len(self.ring_idx), F32))
-        rgb[self.ring_idx] += base * self.ring_val[:, None] * F32(0.9)
-        # 円盤(手前半分)を上に
-        ni = self.disk_idx[self.disk_near]
-        na = da[self.disk_near]
-        rgb[ni] = dcol[self.disk_near] + (1.0 - na)[:, None] * rgb[ni]
+        buf = np.zeros((self.H * self.W, 4), F32)
+        rgb, a = buf[:, :3], buf[:, 3]
+        vf = self._sample(self.far, t, orbit_deg)
+        rgb[self.far_idx] = self.far["K"] * vf[:, None]
+        a[self.far_idx] = np.clip(self.far["prof"] * vf * 2.2, 0, 0.93)
+        vh = self._sample(self.halo, t, orbit_deg)
+        rgb[self.halo_idx] += self.halo["K"] * vh[:, None]
+        sa = self.sh_a
+        rgb[self.sh_idx] *= (1.0 - sa)[:, None]
+        a[self.sh_idx] = sa + (1.0 - sa) * a[self.sh_idx]
+        rgb[self.ring_idx] += self.ring_rgb
+        vn = self._sample(self.near, t, orbit_deg)
+        na = np.clip(self.near["prof"] * vn * 2.2, 0, 0.93)
+        ni = self.near_idx
+        rgb[ni] = self.near["K"] * vn[:, None] + (1.0 - na)[:, None] * rgb[ni]
         a[ni] = na + (1.0 - na) * a[ni]
-        rgb = _tonemap(rgb)
-        return rgb.reshape(H, W, 3), a.reshape(H, W)
+        tch = self.touched
+        rgb[tch] = _tonemap(rgb[tch])
+        return buf.reshape(self.H, self.W, 4)
 
     def lens(self, img, cx, cy, R):
         """背景の星空を点質量レンズで歪ませる(シャドウ周りの星が輪のように回り込む)。"""
@@ -1401,16 +1544,27 @@ class BlackHoleBody:
         x1, y1 = min(W, int(cx + ext) + 1), min(H, int(cy + ext) + 1)
         if x1 - x0 < 4 or y1 - y0 < 4:
             return
-        xs = np.arange(x0, x1, dtype=F32) + 0.5 - F32(cx)
-        ys = np.arange(y0, y1, dtype=F32) + 0.5 - F32(cy)
-        dx, dy = np.meshgrid(xs, ys)
-        r2 = np.maximum(dx * dx + dy * dy, F32(1.0))
-        rr = np.sqrt(r2)
-        te2 = F32((self.THETA_E * R) ** 2)
-        win = _smooth(ext, ext * 0.45, rr)
-        f = np.minimum(te2 / r2, F32(4.0)) * win
-        mx = (cx + dx * (1.0 - f) - 0.5).astype(F32)
-        my = (cy + dy * (1.0 - f) - 0.5).astype(F32)
+        key = (round(cx, 3), round(cy, 3), round(R, 3), W, H)
+        if getattr(self, "_lens_key", None) != key:
+            xs = np.arange(x0, x1, dtype=F32) + 0.5 - F32(cx)
+            ys = np.arange(y0, y1, dtype=F32) + 0.5 - F32(cy)
+            te2 = F32((self.THETA_E * R) ** 2)
+            mx = np.empty((len(ys), len(xs)), F32)
+            my = np.empty_like(mx)
+
+            def work(sl):
+                dx = xs[None, :]
+                dy = ys[sl][:, None]
+                r2 = np.maximum(dx * dx + dy * dy, F32(1.0))
+                f = np.minimum(te2 / r2, F32(4.0)) * _smooth(ext, ext * 0.45, np.sqrt(r2))
+                g = 1.0 - f
+                mx[sl] = F32(cx - 0.5) + dx * g
+                my[sl] = F32(cy - 0.5) + dy * g
+
+            _parallel(work, len(ys), 64)
+            self._lens_maps = (mx, my)
+            self._lens_key = key
+        mx, my = self._lens_maps
         src = img.copy()
         img[y0:y1, x0:x1] = cv2.remap(src, mx, my, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT)
 
@@ -1421,11 +1575,10 @@ class BlackHoleBody:
         R = self.R0 * s
         if self.lensing:
             self.lens(img, cx, cy, R)
-        rgb, a = self.render_sprite(t, orbit_deg)
-        k = R / self.Rs
-        _place_sprite(img, rgb, a, cx, cy, k, self.half_w, self.half_h)
+        buf = self.render_sprite(t, orbit_deg)
+        _place_sprite(img, buf, cx, cy, R / self.Rs, self.half_w, self.half_h)
         ext = R * self.R_OUT * 1.2
-        _bloom(img, (cx - ext, cy - ext * 0.8, cx + ext, cy + ext * 0.8), 0.55, 0.8)
+        _bloom(img, (cx - ext, cy - ext * 0.8, cx + ext, cy + ext * 0.8), 0.55, 0.75)
 
 
 # ================================================================ 星空の前進飛行(ワープ)
@@ -1439,7 +1592,7 @@ class WarpStars:
     def __init__(self, w, h, seed, density, speed, color_variation, fps):
         rng = np.random.default_rng([seed & 0x7FFFFFFF, 5151])
         self.w, self.h, self.speed, self.fps = w, h, speed, fps
-        n = int(1800 * max(0.05, density))
+        n = int(2600 * max(0.05, density))
         self.f = (h / 2.0) / math.tan(math.radians(self.VFOV / 2.0))
         spread = math.tan(math.radians(self.VFOV / 2.0)) * self.Z_FAR * (w / h) * 1.15
         self.x = rng.uniform(-spread, spread, n).astype(F32)
@@ -1470,7 +1623,7 @@ class WarpStars:
         if self.speed <= 0:
             return
         z = self._z(t)
-        tail_t = min(0.12, 2.2 / self.fps) * min(1.0, 0.35 + 0.25 * self.speed)
+        tail_t = 0.06 + 0.035 * min(self.speed, 6.0)          # 筋の長さ(秒)。速いほど長く
         zp = z + self.speed * tail_t
         wrapped = zp > self.Z_FAR
         zp = np.minimum(zp, self.Z_FAR)
@@ -1479,7 +1632,7 @@ class WarpStars:
         X0 = np.where(wrapped, X1, X0)
         Y0 = np.where(wrapped, Y1, Y0)
         fade = _smooth(self.Z_FAR, self.Z_FAR * 0.65, z1) * _smooth(self.Z_NEAR, self.Z_NEAR * 2.5, z1)
-        br = np.clip(self.b * fade * np.minimum(3.0 / z1, 2.5) * 0.6, 0, 1)
+        br = np.clip(self.b * fade * np.minimum(3.5 / z1, 3.0) * 0.9, 0, 1)
         vis = (br > 0.02) & (np.maximum(X0, X1) > -50) & (np.minimum(X0, X1) < self.w + 50) & \
               (np.maximum(Y0, Y1) > -50) & (np.minimum(Y0, Y1) < self.h + 50)
         layer = np.zeros_like(img)
@@ -1553,7 +1706,7 @@ class Space2DSource(FrameSource):
                     pr.get("longitude", 0.0), s_max, self.seed + 17 * k))
         elif template == "sun":
             self.objs.append(SunBody(p["color"], p["activity"], p["size"] * h, tuple(p["position"]),
-                                     p["rotation_speed"], self.seed, s_max, h))
+                                     p["rotation_speed"], self.seed, s_max))
         elif template == "black_hole":
             self.objs.append(BlackHoleBody(p["disk_color"], p["tilt"], p["roll"], p["size"] * h,
                                            tuple(p["position"]), p["spin_speed"], p["lensing"],
@@ -1567,7 +1720,7 @@ class Space2DSource(FrameSource):
                 night, longitude, s_max, seed):
         return PlanetBody(preset, texture, dia_px, center, p["rotation_speed"], longitude,
                           p["sun_angle"], p["sun_elevation"], atm, atm_s, rings, tilt, incl,
-                          clouds, night, seed, s_max, self.h)
+                          clouds, night, seed, s_max)
 
     def frame(self, i: int) -> np.ndarray:
         i = min(max(0, int(i)), max(0, self.n_frames - 1))
