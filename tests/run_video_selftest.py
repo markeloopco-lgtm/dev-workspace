@@ -1,222 +1,384 @@
 #!/usr/bin/env python3
-"""analyze_video.py の検証。答えの分かっている合成動画をffmpegで作って分析させる。GPU・ネット不要。
+"""videolab(動画分析・制作)の検証。GPU・ネット・音声エンジン不要。
 
-合成動画A (320x180 / 30fps / 6秒):
-  0.0-2.0s 青背景 + 横に動く白い四角（1.0s = 30フレーム目だけ全面白のフラッシュ）
-  2.0-3.5s 茶背景 + 縦に動く白い四角
-  3.5-4.0s 黒
-  4.0-6.0s 緑背景 + 横に動く白い四角
-  全編: 右上に黄色の固定ロゴ ／ 音: 440Hz、2.5-3.5sだけ無音
-  期待: 画面の切り替え(カット検出) = 60, 105, 120フレーム目 ／ フラッシュ1回（カットに数えない）／
-        黒0.5秒 ／ 素材の切り替えは「カット1回(2.0s)・暗転1回(黒を挟む)」で素材3本 ／
-        ロゴ部分は固定 ／ 実効fps≈30 ／ 無音 2.5-3.5s
-合成動画B: 60fpsの入れ物に30fps分の絵（同じ絵が2回ずつ） → 実効fps≈30
-合成動画C: 青→橙へ1.5〜2.5秒でディゾルブ → カットではなく「クロスフェード」の切り替え(2.0秒)
-合成動画D: 横に流れる模様(パン) → 大きな変化だが切り替えには数えない
-合成動画E: 動いている素材どうしを1.5秒から0.5秒でクロスフェード → 1.75秒にクロスフェード1回
-合成動画Z: ズームし続ける映像 → 切り替えには数えない
+正解の分かっている合成動画を作って解析し、検出結果を正解と突き合わせる。
+さらに台本 → 制作 → 再解析のラウンドトリップで「作った通りに測れる」ことを確かめる
+(= 目標スタイルとの比較採点が信頼できることの裏付け)。
 
-usage: python tests/run_video_selftest.py
+usage: python tests/run_video_selftest.py [--quick]
 """
 
 import json
-import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
-import analyze_video as av
+ROOT = Path(__file__).resolve().parent.parent
+sys.path[:0] = [str(ROOT), str(ROOT / "tests")]
 
-FPS = 30
-EXPECTED_CUTS = [60, 105, 120]
-LOGO = (250, 10, 60, 20)  # x, y, w, h
+import numpy as np  # noqa: E402
 
-VIDEO_A = (
-    "color=c=0x3050a0:s=320x180:r=30:d=2[bgA];color=c=white:s=40x40:r=30:d=2[sqA];"
-    "[bgA][sqA]overlay=x='20+t*100':y=70:shortest=1[A];"
-    "color=c=0xa05030:s=320x180:r=30:d=1.5[bgB];color=c=white:s=40x40:r=30:d=1.5[sqB];"
-    "[bgB][sqB]overlay=x=140:y='10+t*80':shortest=1[B];"
-    "color=c=black:s=320x180:r=30:d=0.5[K];"
-    "color=c=0x30a050:s=320x180:r=30:d=2[bgC];color=c=white:s=40x40:r=30:d=2[sqC];"
-    "[bgC][sqC]overlay=x='260-t*100':y=100:shortest=1[C];"
-    "[A][B][K][C]concat=n=4:v=1:a=0,"
-    f"drawbox=x={LOGO[0]}:y={LOGO[1]}:w={LOGO[2]}:h={LOGO[3]}:color=yellow:t=fill,"
-    "drawbox=x=0:y=0:w=iw:h=ih:color=white:t=fill:enable='eq(n,30)',format=yuv420p[v];"
-    "sine=f=440:d=2.5[a1];anullsrc=r=44100:cl=mono,atrim=duration=1[a2];sine=f=440:d=2.5[a3];"
-    "[a1][a2][a3]concat=n=3:v=0:a=1[a]"
-)
-VIDEO_B = (
-    "color=c=0x404040:s=320x180:r=30:d=3[bg];color=c=white:s=40x40:r=30:d=3[sq];"
-    "[bg][sq]overlay=x='20+t*90':y=70:shortest=1,fps=60,format=yuv420p[v]"
-)
-VIDEO_C = (
-    "color=c=0x3050a0:s=320x180:r=30:d=3[x];color=c=0xd08030:s=320x180:r=30:d=3[y];"
-    "[x][y]xfade=transition=fade:duration=1:offset=1.5,format=yuv420p[v]"
-)
-VIDEO_D = "testsrc2=s=960x180:r=30:d=3,crop=320:180:x='t*200':y=0,format=yuv420p[v]"
-VIDEO_E = (
-    "testsrc2=s=640x180:r=30:d=3,crop=320:180:x='t*40':y=0[x];"
-    "smptehdbars=s=640x180:r=30:d=3,crop=320:180:x='100-t*30':y=0[y];"
-    "[x][y]xfade=transition=fade:duration=0.5:offset=1.5,format=yuv420p[v]"
-)
-VIDEO_Z = "testsrc2=s=320x180:r=30:d=3,zoompan=z='1+0.3*on/90':d=1:s=320x180:fps=30,format=yuv420p[v]"
+import video_fixtures as vf  # noqa: E402
+from videolab import analyze, audio, ffmpeg_util as ff, pipeline, profile  # noqa: E402
+
+errors = []
 
 
-def encode(graph, out: Path, audio: bool):
-    cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-filter_complex", graph, "-map", "[v]"]
-    if audio:
-        cmd += ["-map", "[a]", "-c:a", "aac", "-b:a", "128k"]
-    cmd += ["-c:v", "libx264", "-crf", "16", "-preset", "veryfast", str(out)]
-    subprocess.run(cmd, check=True)
+def check(cond, msg):
+    if not cond:
+        errors.append(msg)
+    return cond
+
+
+def near(a, b, tol):
+    return a is not None and b is not None and abs(a - b) <= tol
+
+
+def test_analyzer(tmp: Path):
+    video = tmp / "fixture.mp4"
+    truth = vf.build_fixture(video)
+    info, fa, arrays, trans, shots = analyze.analyze_frames(video, quiet=True)
+    check(info.n_frames == truth["n_frames"], f"フレーム数 {info.n_frames} != {truth['n_frames']}")
+    cuts = [t.frame for t in trans if t.kind == "cut"]
+    for c in truth["cuts"]:
+        check(any(abs(c - x) <= 1 for x in cuts), f"カット未検出: frame {c} (検出: {cuts})")
+    check(len(cuts) == len(truth["cuts"]), f"カット数 {len(cuts)} != {len(truth['cuts'])} ({cuts})")
+    diss = [t for t in trans if t.kind == "dissolve"]
+    d = truth["dissolves"][0]
+    check(any(d["start"] - 2 <= t.frame <= d["end"] + 2 for t in diss), f"ディゾルブ未検出 {d} ({diss})")
+    fades = [t for t in trans if t.kind == "fade_black"]
+    fd = truth["fades"][0]
+    check(any(fd["start"] <= t.frame <= fd["end"] for t in fades), f"暗転未検出 {fd}")
+    flashes = [t.frame for t in trans if t.kind == "flash"]
+    check(any(abs(truth["flashes"][0] - f) <= 1 for f in flashes), "フラッシュ未検出(カット扱いされた?)")
+    check(len(shots) == len(truth["shots"]), f"ショット数 {len(shots)} != {len(truth['shots'])}")
+    for sh, tr in zip(shots, truth["shots"]):
+        cam = sh.stats.get("camera")
+        check(cam == tr["camera"], f"shot{sh.index} カメラ {cam} != {tr['camera']}")
+        has_text = (sh.stats.get("text_ratio") or 0) > 0.5
+        check(has_text == tr["telop"], f"shot{sh.index} テロップ判定 {has_text} != {tr['telop']}")
+    z = shots[1].stats.get("zoom_total")
+    check(near(z, 1.12, 0.02), f"ズーム量 {z} (正解1.12)")
+    px = shots[2].stats.get("pan_x_total")
+    check(near(px, -0.104, 0.01), f"パン量 {px} (正解-0.104)")
+    check(shots[2].stats.get("easing") == "ease_in_out", f"イージング {shots[2].stats.get('easing')}")
+    zo = shots[4].stats.get("zoom_total")
+    check(near(zo, 1.03 / 1.15, 0.02), f"ズームアウト量 {zo} (正解{1.03 / 1.15:.3f})")
+    return len(shots)
+
+
+def test_analyzer_hard(tmp: Path):
+    """見落としやすい切替: 1.2秒のディゾルブ・ホイップパン・白を挟む切替・まばらな星空のカット。"""
+    video = tmp / "hard.mp4"
+    truth = vf.build_hard_fixture(video)
+    info, fa, arrays, trans, shots = analyze.analyze_frames(video, quiet=True)
+    diss = [t for t in trans if t.kind == "dissolve"]
+    a, b = truth["dissolve"]
+    check(len(diss) == 1 and a <= diss[0].frame <= b and diss[0].length >= 0.7 * (b - a),
+          f"遅いディゾルブ {[(t.frame, t.length) for t in diss]} (正解 {a}-{b})")
+    cuts = [t.frame for t in trans if t.kind == "cut"]
+    check(len(cuts) == len(truth["cuts"]), f"カット数 {cuts} (正解 {truth['cuts']})")
+    for c in truth["cuts"]:
+        check(any(abs(c - x) <= 1 for x in cuts), f"カット未検出(ホイップ/白/星空): {c} (検出 {cuts})")
+    check(len(shots) == truth["n_shots"], f"ショット数 {len(shots)} (正解 {truth['n_shots']})")
+    check(not any(s.kind == "black" for s in shots), "まばらな星空が暗転扱いになった")
+    stars = [s for s in shots if s.start >= truth["cuts"][2] - 1][:2]
+    check(len(stars) == 2 and stars[0].stats.get("camera") == "zoom_in"
+          and stars[1].stats.get("camera") == "pan_right",
+          f"星空ショットのカメラ {[s.stats.get('camera') for s in stars]}")
+
+
+def test_audio(tmp: Path):
+    wav = tmp / "speech.wav"
+    truth = vf.build_audio_fixture(wav)
+    mp4 = tmp / "speech.mp4"
+    ff.run([ff.find_ffmpeg(), "-v", "error", "-y", "-f", "lavfi", "-i",
+            "color=black:s=320x180:r=30:d=12", "-i", str(wav), "-shortest", "-c:v", "libx264",
+            "-c:a", "aac", "-b:a", "192k", str(mp4)])
+    info = ff.probe(mp4)
+    r = audio.analyze_audio(mp4, info)
+    import pyloudnorm
+    import soundfile as sf
+    y, sr = sf.read(str(wav))
+    ref = pyloudnorm.Meter(sr).integrated_loudness(y)
+    check(near(r["lufs_integrated"], ref, 0.5), f"ラウドネス {r['lufs_integrated']} (基準 {ref:.2f})")
+    segs = r["segments"]
+    check(len(segs) == len(truth["speech_segments"]), f"発話区間数 {len(segs)} != 3")
+    for (s, e), g in zip(truth["speech_segments"], segs):
+        check(near(g["start"], s, 0.15) and near(g["end"], e, 0.15), f"発話区間 {g} (正解 {s}-{e})")
+    # YouTube自動字幕風のVTT(流れる重複行)の解析
+    vtt = tmp / "x.ja.vtt"
+    vtt.write_text(
+        "WEBVTT\n\n"
+        "00:00:00.500 --> 00:00:02.000 align:start position:0%\n"
+        "もしも<00:00:00.900><c>地球が</c>\n\n"
+        "00:00:02.000 --> 00:00:02.010\nもしも地球が\n\n"
+        "00:00:02.010 --> 00:00:04.000\nもしも地球が\n止まったら\n\n", encoding="utf-8")
+    cues = audio.parse_subtitles(vtt)
+    check([c["text"] for c in cues] == ["もしも地球が", "止まったら"], f"VTT解析 {cues}")
+    # 自動字幕: 単語時刻から発話の終わりを推定し、行の表示が伸びている「間」を発話に数えない
+    vtt2 = tmp / "auto.ja.vtt"
+    vtt2.write_text(
+        "WEBVTT\nKind: captions\nLanguage: ja\n\n"
+        "00:00:00.000 --> 00:00:03.000 align:start position:0%\n[音楽]\n\n"
+        "00:00:03.000 --> 00:00:05.990 align:start position:0%\n \n"
+        "もしも<00:00:03.500><c>地球の</c><00:00:04.200><c>自転が</c>\n\n"
+        "00:00:05.990 --> 00:00:06.000 align:start position:0%\nもしも地球の自転が\n \n\n"
+        "00:00:06.000 --> 00:00:09.990 align:start position:0%\nもしも地球の自転が\n"
+        "止まったら<00:00:06.600><c>どうなる</c><00:00:07.000><c>でしょうか</c>\n\n"
+        "00:00:09.990 --> 00:00:10.000 align:start position:0%\n止まったらどうなるでしょうか\n \n\n"
+        "00:00:10.000 --> 00:00:12.000 align:start position:0%\n止まったらどうなるでしょうか\n"
+        "赤道<00:00:10.500><c>では</c>\n", encoding="utf-8")
+    c2 = audio.parse_subtitles(vtt2)
+    check([c["text"] for c in c2] == ["もしも地球の自転が", "止まったらどうなるでしょうか", "赤道では"],
+          f"自動字幕の本文 {[c['text'] for c in c2]}")
+    st = audio.speech_stats(c2, 12.0)
+    check(st["gap_median"] is not None and st["speech_ratio"] < 0.8,
+          f"自動字幕の間が発話扱い {st}")
+    # 手動字幕の2行cueは全文を使い、空のcueが次のcueを飲み込まない
+    srt = tmp / "manual.srt"
+    srt.write_text("1\n00:00:01,000 --> 00:00:02,000\n\n2\n00:00:03,000 --> 00:00:05,000\n"
+                   "もしも地球の自転が\n突然止まったら？\n\n", encoding="utf-8")
+    c3 = audio.parse_subtitles(srt)
+    check([(c["start"], c["text"]) for c in c3] == [(3.0, "もしも地球の自転が突然止まったら？")],
+          f"手動字幕の解析 {c3}")
+
+
+def test_profile(tmp: Path, n_shots_expected: int):
+    out = pipeline.run_analysis(tmp / "fixture.mp4", tmp / "an_fixture", report=True, quiet=True)
+    for name in ("meta.json", "frames.csv", "shots.json", "shots.csv", "audio.json", "profile.json",
+                 "contact_sheet.jpg", "report.html"):
+        check((out / name).exists(), f"成果物が無い: {name}")
+    p = profile.load_profile(out)
+    check(p["editing"]["n_shots"] == n_shots_expected, f"profile n_shots {p['editing']['n_shots']}")
+    self_cmp = profile.compare(p, p)
+    check(self_cmp["score"] == 100.0, f"自己比較スコアが100でない: {self_cmp['score']}")
+    agg = profile.aggregate([p, p])
+    check(agg["editing"]["shot_len_median"] == p["editing"]["shot_len_median"], "aggregateの中央値")
+    check(abs(sum(agg["camera"]["move_mix"].values()) - 1.0) < 0.01, "aggregateの構成比の合計")
+    yml = tmp / "agg.yaml"
+    profile.save_profile(agg, yml)
+    check(profile.load_profile(yml)["source"]["n"] == 2, "YAML保存/読込")
+    html = (out / "report.html").read_text(encoding="utf-8")
+    check("<svg" in html and "shot_0000.jpg" in html, "レポートにグラフ/キーフレームが無い")
+
+
+def test_timeline_units():
+    from videolab.produce.telop import split_telop
+    from videolab.produce.timeline import DeficitPicker
+    pk = DeficitPicker({"cut": 0.8, "dissolve": 0.2})
+    seq = [pk.pick() for _ in range(50)]
+    check(seq.count("dissolve") == 10, f"DeficitPickerの比率 {seq.count('dissolve')}/50")
+    parts = split_telop("これはとても長い台詞なので二つに分かれるはずです。", 22)
+    check(parts == ["これはとても長い台詞なので", "二つに分かれるはずです。"], f"テロップ分割 {parts}")
+    from videolab.produce.sources import CameraMove
+    c = CameraMove("pan_right", 0.1)
+    check(c.at(0)[1] > c.at(1)[1], "pan_right は中身が左へ流れる")
+
+
+def test_roundtrip(tmp: Path, quick: bool):
+    """台本 → 制作 → 再解析。計画したカット・カメラワーク・音量が測り直して一致するか。"""
+    import cv2
+    from videolab.produce.compose import produce_episode
+
+    for i in range(2):
+        ff.imwrite(tmp / f"img{i}.png", cv2.cvtColor(vf.texture(30 + i, 1600, 900), cv2.COLOR_RGB2BGR))
+    visuals_b = ["{type: image, path: img1.png, camera: pan_right}",
+                 "{type: color, color: '#0b1d3a', color2: '#1e5aa8'}"]
+    if not quick:
+        visuals_b.append("{type: space, template: planet, params: {preset: earth}, engine: 2d, "
+                         "camera: zoom_in}")
+    ep = tmp / "rt.yaml"
+    ep.write_text(f"""
+title: ラウンドトリップ
+voices:
+  ナレーター: {{engine: dummy}}
+  教授: {{engine: dummy}}
+scenes:
+  - id: a
+    title: テスト
+    lines:
+      - {{speaker: ナレーター, text: "もしも、月が今の半分の距離まで近づいたら……？"}}
+      - {{speaker: 教授, text: "夜空の景色も、海の姿も、まるで別の星になってしまうぞ。"}}
+    visuals:
+      - {{type: image, path: img0.png, camera: zoom_in}}
+  - id: b
+    lines:
+      - {{speaker: ナレーター, text: "まず、見た目の大きさは今の2倍。面積にすると4倍です。"}}
+      - {{speaker: 教授, text: "満月の明るさも、およそ4倍になる。夜道で本が読めるほどじゃ。", callout: "明るさ 4倍"}}
+    visuals: [{", ".join(visuals_b)}]
+""", encoding="utf-8")
+    style = profile.load_profile(ROOT / "configs" / "style_profile.yaml")
+    res = produce_episode(ep, ROOT / "configs" / "style_profile.yaml", tmp / "rt.mp4", draft=True,
+                          quiet=True)
+    plan = json.loads(Path(res["plan"]).read_text(encoding="utf-8"))
+    out = pipeline.run_analysis(res["video"], tmp / "an_rt", subs=res["srt"], report=False,
+                                quiet=True)
+    shots = json.loads((out / "shots.json").read_text(encoding="utf-8"))
+    aud = json.loads((out / "audio.json").read_text(encoding="utf-8"))
+    info = ff.probe(res["video"])
+    check(near(info.duration, plan["duration"], 0.1), f"尺 {info.duration} != 計画 {plan['duration']}")
+    check(len(shots) == len(plan["shots"]), f"再解析のショット数 {len(shots)} != 計画 {len(plan['shots'])}")
+    for ps in plan["shots"]:
+        mid = (ps["start"] + ps["end"]) / 2
+        got = next((s for s in shots if s["start"] <= mid < s["end"]), None)
+        if not check(got is not None, f"計画shot{ps['index']}に対応するショットが無い"):
+            continue
+        kind, amt = ps["camera"]["kind"], ps["camera"]["amount"]
+        if ps["visual"]["type"] == "color":
+            continue   # 無地は特徴点が無くカメラを測れない(unknown)のが正しい
+        if kind == "zoom_in" and ps["visual"]["type"] == "space":
+            # 宇宙シーンは星空に奥行き(パララックス)があり、画面全体の拡大率は惑星より小さく出る
+            check(got["zoom_total"] is not None and got["zoom_total"] > 1 + 0.3 * amt,
+                  f"計画shot{ps['index']} 宇宙 zoom_in {1 + amt:.3f} → 実測 {got['zoom_total']}")
+        elif kind == "zoom_in":
+            check(near(got["zoom_total"], 1 + amt, 0.02 + 0.2 * amt),
+                  f"計画shot{ps['index']} zoom_in {1 + amt:.3f} → 実測 {got['zoom_total']}")
+        elif kind in ("pan_right", "pan_left"):
+            exp = -amt if kind == "pan_right" else amt
+            check(near(got["pan_x_total"], exp, 0.01 + 0.25 * amt),
+                  f"計画shot{ps['index']} {kind} {exp:.3f} → 実測 {got['pan_x_total']}")
+        check(got["camera"] == ("static" if kind == "static" else kind) or
+              (kind == "static" and got["camera"] in ("static", "static_action")),
+              f"計画shot{ps['index']} {kind} → 実測 {got['camera']}")
+    target = style["audio"]["lufs_integrated"]
+    check(near(aud["lufs_integrated"], target, 1.0), f"ラウドネス {aud['lufs_integrated']} (目標 {target})")
+    check(aud["true_peak"] is not None and aud["true_peak"] <= -0.9, f"トゥルーピーク {aud['true_peak']}")
+    check(aud["speech_source"] == "transcript", "自作動画は字幕(SRT)から発話区間を取れるはず")
+    check(Path(res["credits"]).exists() and Path(res["srt"]).exists(), "字幕/クレジットが無い")
+    check(len(plan.get("callouts", [])) == 1, f"強調テキストの数 {plan.get('callouts')}")
+    # 参考動画フォルダの素材は拒否される
+    from videolab.produce.episode import EpisodeError, load_episode
+    bad = tmp / "refs"
+    bad.mkdir(exist_ok=True)
+    (bad / "x.png").write_bytes((tmp / "img0.png").read_bytes())
+    ep_bad = tmp / "bad.yaml"
+    ep_bad.write_text("scenes:\n  - lines: [テスト]\n    visuals: [{type: image, path: refs/x.png}]\n",
+                      encoding="utf-8")
+    try:
+        load_episode(ep_bad)
+        check(False, "refs/ の素材が拒否されなかった")
+    except EpisodeError:
+        pass
+
+
+def test_guards(tmp: Path):
+    """安全装置: 参考動画フォルダの素材拒否・URL検査・purge・台本の検査・長いタイトル。"""
+    import cv2
+    from videolab import fetch
+    from videolab.produce.episode import EpisodeError, load_episode
+    from videolab.produce.telop import DEFAULT_TELOP, DEFAULT_TITLE, TextRenderer, find_font
+
+    # 上の階層に analysis という名前のフォルダがあっても自分の素材は拒否しない
+    proj = tmp / "Analysis" / "proj"
+    (proj / "assets").mkdir(parents=True)
+    (proj / "refs").mkdir()
+    img = proj / "assets" / "own.png"
+    ff.imwrite(img, np.zeros((90, 160, 3), np.uint8))
+    ff.imwrite(proj / "refs" / "ref.png", np.zeros((90, 160, 3), np.uint8))
+    ep = proj / "ep.yaml"
+    ep.write_text("scenes:\n  - lines: [テスト]\n    visuals: [{type: image, path: assets/own.png}]\n",
+                  encoding="utf-8")
+    try:
+        load_episode(ep)
+    except EpisodeError as e:
+        check(False, f"上位フォルダ名で自分の素材が拒否された: {e}")
+    # 惑星比較のテクスチャ(複数)に参考動画フォルダの画像 → 拒否
+    ep.write_text("scenes:\n  - lines: [テスト]\n    visuals: [{type: space, template: planet_compare,"
+                  " params: {presets: [earth, moon], textures: [refs/ref.png, null]}}]\n",
+                  encoding="utf-8")
+    try:
+        load_episode(ep)
+        check(False, "textures 経由の refs/ 素材が拒否されなかった")
+    except EpisodeError:
+        pass
+    # 話者名の打ち間違い・無いBGM → 分かりやすいエラー
+    for body, what in [
+        ("voices: {ナレーター: {engine: dummy}}\nscenes:\n  - lines: [{speaker: ナレータ, text: あ}]\n", "話者"),
+        ("bgm: [{file: assets/typo.mp3}]\nscenes:\n  - lines: [テスト]\n", "BGM"),
+        ("scenes:\n  - lines: [{speaker: a, text: 'x'}\n", "YAML"),
+    ]:
+        ep.write_text(body, encoding="utf-8")
+        try:
+            load_episode(ep)
+            check(False, f"{what}の誤りが検出されなかった")
+        except EpisodeError:
+            pass
+    # 下書きでは未配置の素材を仮カードで代用
+    ep.write_text("scenes:\n  - lines: [テスト]\n    visuals: [{type: image, path: assets/todo.png}]\n",
+                  encoding="utf-8")
+    e2 = load_episode(ep, allow_missing=True)
+    check(len(e2["_missing"]) == 1 and e2["scenes"][0]["visuals"][0]["type"] == "color",
+          "下書きの素材TODO代用")
+    # 1本の動画URLだけ受け付ける
+    check(fetch.single_video_url("https://www.youtube.com/watch?v=abcdEFGhijk&list=PLx&index=3")
+          == "https://www.youtube.com/watch?v=abcdEFGhijk", "URLの正規化")
+    for bad in ("https://www.youtube.com/@someone/videos", "https://www.youtube.com/playlist?list=PLabc"):
+        try:
+            fetch.single_video_url(bad)
+            check(False, f"一括取得になるURLが拒否されなかった: {bad}")
+        except RuntimeError:
+            pass
+    # purge: [ ] を含む名前でも字幕・情報ファイルまで消す / 数値データは残す
+    refs = tmp / "prefs"
+    refs.mkdir()
+    stem = "[SAMPLE] title [abcdefghijk]"
+    for suf in (".mp4", ".ja.vtt", ".info.json"):
+        (refs / (stem + suf)).write_text("x", encoding="utf-8")
+    an = tmp / "an_purge"
+    (an / "keyframes").mkdir(parents=True)
+    (an / "profile.json").write_text("{}", encoding="utf-8")
+    (an / "transcript.json").write_text("[]", encoding="utf-8")
+    pipeline.purge(an, refs / (stem + ".mp4"))
+    check(not any(refs.iterdir()), f"purgeで残ったファイル: {list(refs.iterdir())}")
+    check((an / "profile.json").exists() and not (an / "keyframes").exists(), "purgeの対象")
+    # 長いタイトル・縦動画でも描画が落ちず画面内に収まる
+    font = find_font()
+    for (w, h) in [(1920, 1080), (960, 540), (1080, 1920)]:
+        tr = TextRenderer(w, h, {**DEFAULT_TELOP, **DEFAULT_TITLE}, font)
+        for t in ("もしも地球の自転が止まったら何が起こる？", "潮を起こす力は距離の3乗に反比例",
+                  "とても長いタイトルがここに入っていて画面に収まるかどうかを確かめるための文章です"):
+            arr, x, y = tr.render(t)
+            check(arr.shape[1] <= w and x >= 0, f"タイトルがはみ出す {w}x{h} {t}")
+    # パンで画面端に鏡像の帯が出ない(左右の端の列が原画にある色だけになる)
+    from videolab.produce.sources import CameraMove, ImageSource
+    grad = np.tile(np.linspace(0, 255, 800, dtype=np.uint8)[None, :, None], (450, 1, 3))
+    ff.imwrite(tmp / "grad.png", grad)
+    src = ImageSource(tmp / "grad.png", 30, 320, 180, CameraMove("pan_right", 0.12))
+    for i in (0, 29):
+        row = src.frame(i)[90, :, 0].astype(int)
+        check(np.all(np.diff(row) >= -1), f"パンの端に鏡像の帯 (frame {i})")
+    del cv2
 
 
 def main() -> int:
-    av.require_tools("ffmpeg", "ffprobe")
-    tmp = Path(tempfile.mkdtemp(prefix="video_selftest_"))
-    va, vb, vc, vd, ve, vz = (tmp / f"{k}.mp4" for k in "abcdez")
-    encode(VIDEO_A, va, audio=True)
-    encode(VIDEO_B, vb, audio=False)
-    encode(VIDEO_C, vc, audio=False)
-    encode(VIDEO_D, vd, audio=False)
-    encode(VIDEO_E, ve, audio=False)
-    encode(VIDEO_Z, vz, audio=False)
-    errors = []
-
-    # 1) メタデータ
-    info = av.probe(va)
-    vi = info["video"]
-    if (vi["width"], vi["height"], round(vi["fps"])) != (320, 180, FPS):
-        errors.append(f"probe: {vi['width']}x{vi['height']} {vi['fps']}fps")
-    if abs(info["duration_sec"] - 6.0) > 0.1:
-        errors.append(f"probe: 長さ {info['duration_sec']}")
-
-    # 2) 走査とカット検出(フラッシュはカットに数えない)
-    sc = av.scan_video(va, info, verbose=False)
-    if len(sc.t) != 6 * FPS:
-        errors.append(f"フレーム数 {len(sc.t)} (期待 {6 * FPS})")
-    cuts, guard = av.detect_cuts(sc)
-    if len(cuts) != len(EXPECTED_CUTS) or any(abs(c - e) > 1 for c, e in zip(cuts, EXPECTED_CUTS)):
-        errors.append(f"カット位置 {cuts} (期待 {EXPECTED_CUTS})")
-    flashes = av.detect_flash_events(sc, guard)
-    if len(flashes) != 1 or abs(flashes[0]["start"] - 1.0) > 0.05:
-        errors.append(f"フラッシュ {flashes} (期待: 1.0秒に1回)")
-    black = av.detect_black(sc)
-    if len(black) != 1 or abs(black[0][0] - 105) > 1 or abs(black[0][1] - 120) > 1:
-        errors.append(f"黒画面 {black} (期待: 105-120フレーム)")
-
-    # 3) 固定部分(ロゴ)と動く部分(四角の通り道)
-    x, y, w, h = LOGO
-    logo_std = float(sc.std_map[y + 4:y + h - 4, x + 4:x + w - 4].max())
-    if logo_std >= av.STATIC_STD:
-        errors.append(f"ロゴ部分が固定とみなされない: std={logo_std:.2f}")
-    if float(sc.motion_map[80:100, 60:200].mean()) <= float(sc.motion_map[y:y + h, x:x + w].mean()):
-        errors.append("四角の通り道よりロゴ部分の方が動いていることになっている")
-    regions = av.dynamic_regions(sc.motion_map)
-    if not regions or regions[0]["area"] > 60:
-        errors.append(f"動く領域がカットの画面切り替えに引きずられている: {regions[:1]}")
-    elif any(r["x0"] <= 80 <= r["x1"] and r["y0"] <= 10 for r in regions if r["y1"] <= 17):
-        errors.append(f"固定ロゴが動く領域に入っている: {regions}")
-
-    # 3b) ディゾルブはカットではなく「クロスフェード」の切り替え、パンは切り替えに数えない
-    sc_c = av.scan_video(vc, av.probe(vc), verbose=False)
-    cuts_c, _ = av.detect_cuts(sc_c)
-    changes_c = av.detect_changes(sc_c, cuts_c, [])
-    bounds_c = av.merge_boundaries(sc_c, cuts_c, changes_c)
-    if cuts_c:
-        errors.append(f"ディゾルブをカットと判定: {cuts_c}")
-    if len(bounds_c) != 1 or bounds_c[0][1] != "dissolve" or abs(sc_c.t[bounds_c[0][0]] - 2.0) > 0.15:
-        errors.append(f"ディゾルブの切り替え {bounds_c} / 区間 {changes_c} (期待: 2.0秒にクロスフェード1回)")
-    for name, video in (("パン", vd), ("ズーム", vz)):
-        sc_m = av.scan_video(video, av.probe(video), verbose=False)
-        cuts_m, _ = av.detect_cuts(sc_m)
-        changes_m = av.detect_changes(sc_m, cuts_m, [])
-        summary = [(c["kind"], c["blend"]) for c in changes_m]
-        if cuts_m or av.merge_boundaries(sc_m, cuts_m, changes_m):
-            errors.append(f"{name}を切り替えと判定: cuts={cuts_m} changes={summary}")
-        if not changes_m or any(c["kind"] != "motion" for c in changes_m):
-            errors.append(f"{name}が「大きな変化」として出ない: {summary}")
-    sc_e = av.scan_video(ve, av.probe(ve), verbose=False)
-    cuts_e, _ = av.detect_cuts(sc_e)
-    bounds_e = av.merge_boundaries(sc_e, cuts_e, av.detect_changes(sc_e, cuts_e, []))
-    if len(bounds_e) != 1 or bounds_e[0][1] != "dissolve" or abs(sc_e.t[bounds_e[0][0]] - 1.75) > 0.15:
-        errors.append(f"動く素材どうしのクロスフェード {bounds_e} / cuts {cuts_e} (期待: 1.75秒にクロスフェード1回)")
-    rep_c = av.analyze(vc, tmp / "report_c", sheets=False, verbose=False)
-    ed_c = rep_c["editing"]
-    if (ed_c["transitions"], ed_c["dissolves"], ed_c["shots"]) != (1, 1, 2) \
-            or rep_c["editing"]["shot_list"][1]["transition_in"] != "dissolve":
-        errors.append(f"ディゾルブ動画のレポート: 切り替え{ed_c['transitions']} クロスフェード{ed_c['dissolves']}"
-                      f" ショット{ed_c['shots']} (期待 1/1/2)")
-    if not (tmp / "report_c" / "shots.csv").read_text(encoding="utf-8-sig").count("クロスフェード") == 1:
-        errors.append("shots.csv にクロスフェードの行がない")
-
-    # 4) 実効fps: A は 30fps のまま、B は 60fps 入れ物で中身 30fps
-    eff = av.effective_fps(sc, cuts)
-    if not eff or abs(eff["fps"] - 30) > 2:
-        errors.append(f"実効fps(A) {eff} (期待 ≈30)")
-    info_b = av.probe(vb)
-    sc_b = av.scan_video(vb, info_b, verbose=False)
-    eff_b = av.effective_fps(sc_b, av.detect_cuts(sc_b)[0])
-    if round(info_b["video"]["fps"]) != 60 or not eff_b or abs(eff_b["fps"] - 30) > 3:
-        errors.append(f"実効fps(B) {eff_b} / 入れ物 {info_b['video']['fps']}fps (期待: 60fps中身≈30)")
-
-    # 5) 一括分析: 無音区間・ラウドネス・出力ファイル
-    rep = av.analyze(va, tmp / "report", verbose=False)
-    aud = rep["audio"] or {}
-    if aud.get("lufs") is None or not -40 < aud["lufs"] < -10:
-        errors.append(f"ラウドネス {aud.get('lufs')}")
-    db = av.scan_audio(va)
-    pauses = av._runs(db < av.QUIET_DB, min_len=3)
-    if len(pauses) != 1 or abs(pauses[0][0] * av.AUDIO_BLOCK - 2.5) > 0.15 \
-            or abs(pauses[0][1] * av.AUDIO_BLOCK - 3.5) > 0.15:
-        errors.append(f"無音区間 {[(a * av.AUDIO_BLOCK, b * av.AUDIO_BLOCK) for a, b in pauses]} (期待 2.5-3.5s)")
-    ed = rep["editing"]
-    if (ed["transitions"], ed["cuts"], ed["fades"], ed["shots"]) != (2, 1, 1, 3):
-        errors.append(f"レポートの切り替え/カット/暗転/素材数 {ed['transitions']}/{ed['cuts']}/{ed['fades']}/"
-                      f"{ed['shots']} (期待 2/1/1/3)")
-    if [s["transition_in"] for s in ed["shot_list"] if not s["black"]] != ["start", "cut", "fade"]:
-        errors.append(f"素材の入り方 {[(s['transition_in'], s['black']) for s in ed['shot_list']]}")
-    out = tmp / "report"
-    for name in ["report.md", "report.json", "timeline.png", "palette.png", "layout_motion.png",
-                 "layout_static.png", "sheet_shots_01.jpg", "sheet_timeline_01.jpg"]:
-        if not (out / name).exists():
-            errors.append(f"出力がない: {name}")
-    md = (out / "report.md").read_text(encoding="utf-8")
-    for must in ["## 1. 基本スペック", "## 7. フレーム単位で確認したい区間", "--start"]:
-        if must not in md:
-            errors.append(f"report.md に {must!r} がない")
-    json.loads((out / "report.json").read_text(encoding="utf-8"))
-
-    # 6) 区間指定の分析: 時刻がファイル先頭基準のまま出るか
-    part = av.analyze(va, tmp / "report_part", start=1.5, duration=2.5, sheets=False, verbose=False)
-    part_tr = [(x["at"], x["kind"]) for x in part["editing"]["transition_list"]]
-    if len(part_tr) != 2 or abs(part_tr[0][0] - 2.0) > 0.05 or abs(part_tr[1][0] - 3.5) > 0.05 \
-            or [k for _, k in part_tr] != ["cut", "fade"]:
-        errors.append(f"区間分析の切り替え {part_tr} (期待 [(2.0, cut), (3.5, fade)])")
-
-    # 7) frames: 指定区間の全フレームと時刻
-    fr = av.extract_frames(va, 1.9, count=6, outdir=tmp / "frames", verbose=False)
-    ts = [f["t"] for f in fr["frames"]]
-    if len(ts) != 6 or abs(ts[0] - 1.9) > 0.02 or abs(ts[1] - ts[0] - 1 / FPS) > 0.005:
-        errors.append(f"frames の時刻 {ts}")
-    if not (tmp / "frames" / "filmstrip_01.jpg").exists():
-        errors.append("frames の一覧画像がない")
-
-    # 8) compare: 自分自身との比較は差ゼロ、音量差は調整案が出る
-    same = av.compare_reports(rep, rep)
-    if "大きな差はありません" not in same:
-        errors.append("同じレポート同士の比較で差が出ている")
-    louder = json.loads(json.dumps(rep))
-    louder["audio"]["lufs"] = rep["audio"]["lufs"] + 6
-    if "ゲイン" not in av.compare_reports(louder, rep):
-        errors.append("音量差があるのにゲイン調整の案が出ない")
-
+    quick = "--quick" in sys.argv
+    tmp = Path(tempfile.mkdtemp(prefix="vlab_selftest_"))
+    t0 = time.time()
+    steps = [("解析(合成動画の正解照合)", lambda: test_analyzer(tmp))]
+    n = None
+    for name, fn in steps:
+        n = fn()
+    test_analyzer_hard(tmp)
+    test_audio(tmp)
+    test_profile(tmp, n)
+    test_timeline_units()
+    test_guards(tmp)
+    import os
+    cwd = os.getcwd()
+    os.chdir(tmp)   # renders/cache を一時フォルダに作らせる
+    try:
+        test_roundtrip(tmp, quick)
+    finally:
+        os.chdir(cwd)
     if errors:
         print("[FAIL]")
         for e in errors:
             print(f"  - {e}")
         return 1
-    print(f"[OK] カット/フラッシュ/黒画面/ディゾルブ/固定部分と動く領域/実効fps/無音/区間分析/frames/compare を確認 ({tmp})")
+    print(f"[OK] 解析の正解照合・音声・プロファイル・制作ラウンドトリップを確認 "
+          f"({time.time() - t0:.0f}秒, {tmp})")
     return 0
 
 

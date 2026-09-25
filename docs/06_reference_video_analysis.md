@@ -36,7 +36,7 @@ winget install --id Python.Python.3.12 -e   # Pythonが未導入の場合のみ
 ffmpeg -version                              # バージョンが出ればOK
 python -m venv .venv
 .venv\Scripts\pip install -r requirements.txt   # 取得用の yt-dlp と、その実行に要る Deno も入る
-.venv\Scripts\python tests\run_video_selftest.py # [OK] が出れば分析ツールは正常
+.venv\Scripts\python tests\run_analyze_video_selftest.py # [OK] が出れば分析ツールは正常
 ```
 
 ## Step 1: 参考動画を取得
@@ -154,5 +154,5 @@ Claude Code に頼む例:「work/XXXXXXXXXXX/source_report を読んで、同じ
 - **暗転**: 黒い画面をはさむ切り替え（黒へのカット・フェードを含む）を1回と数える
 - **実効fps**: 動いている場面で「前と同じ絵」のコマが占める割合から計算
 - **ラウドネス**: ffmpeg の ebur128（EBU R128 / ITU-R BS.1770 準拠）
-- 検証: `tests/run_video_selftest.py`（答えの分かっている合成動画で、カット・クロスフェード・パン/ズームの区別・
+- 検証: `tests/run_analyze_video_selftest.py`（答えの分かっている合成動画で、カット・クロスフェード・パン/ズームの区別・
   暗転・フラッシュ・実効fps・無音区間などを確認）

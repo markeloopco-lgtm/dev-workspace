@@ -24,10 +24,31 @@ AITuberKitで自動運用配信               ← docs/04
    + Live2Dリップシンク + OBS→YouTube
 ```
 
-お手本にしたい動画は `scripts/analyze_video.py` でフレーム単位に分析し、
-編集テンポ・つなぎ方・画面配置・色・音量の目標値を作れる（[docs/06](docs/06_reference_video_analysis.md)）。
+## 解説動画の作風分析・制作（videolab）
 
-## セットアップ
+参考動画（VAIENCE等の科学解説CG動画）を**フレーム単位で計測**して作風を数値化し、
+同じテンポ・品質の**オリジナル動画**を台本YAMLから自動で組み立てて、同じ物差しで採点する。
+
+```
+参考動画 ──watch(URLのままGemini)／fetch→analyze(全フレーム計測)──▶ report.html・profile.json
+   3〜5本を aggregate ──▶ configs/style_profile.yaml（目標スタイル・数値のみ）
+台本 episodes/*.yaml ──produce──▶ VOICEVOX合成 → カット割り → 宇宙3DCG/画像 → テロップ → ミックス
+   ──▶ renders/*.mp4 ──--check──▶ gap_report.md（一致度スコアと直し方）
+```
+
+```powershell
+py -3.12 -m venv .venv-video
+.venv-video\Scripts\python.exe -m pip install -r requirements-video.txt
+.venv-video\Scripts\python.exe scripts\vlab.py doctor
+.venv-video\Scripts\python.exe scripts\vlab.py produce episodes\sample_moon_half.yaml --tts dummy --draft
+```
+
+手順は [docs/06（分析）](docs/06_video_analysis.md) と [docs/07（制作）](docs/07_video_production.md)。
+検証: `python tests/run_video_selftest.py`（正解つき合成動画で解析精度と制作ラウンドトリップを確認）。
+
+参考動画の**簡易レポート**（編集テンポ・つなぎ方・素材ごとの一覧 shots.csv・画面配置・色・音量・自分の動画との比較）は `scripts/analyze_video.py` でも作れる（[docs/06_reference_video_analysis.md](docs/06_reference_video_analysis.md)。OpenCV不要で軽い）。
+
+## セットアップ（Live2D側）
 
 ```bash
 python3 -m venv .venv
@@ -36,8 +57,8 @@ python3 -m venv .venv
 # 動作確認 (GPU不要・合成PSDでラウンドトリップ検証)
 .venv/bin/python tests/run_selftest.py
 
-# 動画分析の動作確認 (ffmpeg が必要・合成動画で検証)
-.venv/bin/python tests/run_video_selftest.py
+# analyze_video.py の動作確認 (ffmpeg が必要・合成動画で検証)
+.venv/bin/python tests/run_analyze_video_selftest.py
 ```
 
 See-through本体は別リポジトリ。セットアップは [docs/02](docs/02_see_through_setup.md) 参照。
@@ -75,7 +96,7 @@ export SEE_THROUGH_DIR=/path/to/see-through
 | `docs/03_cubism_template_workflow.md` | Cubismテンプレート量産手順・チェックリスト |
 | `docs/04_aituber_runtime.md` | AITuber運用構成 (AITuberKit + Gemini + SBV2 + OBS) |
 | `docs/05_local_claude_code.md` | ローカルPCへの移行手順 (Claude Codeで続きを進める) |
-| `docs/06_reference_video_analysis.md` | 参考動画のフレーム分析と目標値の作り方 |
+| `docs/06_reference_video_analysis.md` | analyze_video.py の使い方（簡易レポート・目標値の作り方） |
 | `CLAUDE.md` | ローカルClaude Code用の引き継ぎ書 (現状・残タスク・技術前提) |
 | `scripts/normalize_psd.py` | PSDレイヤー正規化 (inspect / normalize / PNG書き出し) |
 | `scripts/batch_decompose.py` | 分解→正規化の一括ドライバ |
@@ -85,7 +106,15 @@ export SEE_THROUGH_DIR=/path/to/see-through
 | `configs/aituberkit.env.example` | AITuberKit環境変数テンプレ (本構成向け・検証済み) |
 | `notebooks/see_through_free_gpu.ipynb` | See-throughをKaggle/Colab無料GPU枠で回すノートブック |
 | `tests/run_selftest.py` | ラウンドトリップ検証 (GPU不要) |
-| `tests/run_video_selftest.py` | 動画分析の検証 (答えの分かっている合成動画で確認) |
+| `tests/run_analyze_video_selftest.py` | analyze_video.py の検証 (答えの分かっている合成動画で確認) |
+| `docs/06_video_analysis.md` | 参考動画のフレーム単位分析 → 目標スタイル |
+| `docs/07_video_production.md` | 台本から動画を制作・採点 |
+| `scripts/vlab.py` | videolabのコマンド一式 |
+| `videolab/` | 分析・制作の本体 |
+| `configs/style_profile.yaml` | 目標スタイル（数値のみ） |
+| `episodes/` | 台本YAML（書式: `episodes/README.md`） |
+| `prompts/` | Claude Code向けの台本作成・構成分析の指示書 |
+| `tests/run_video_selftest.py` | 解析精度・制作ラウンドトリップ検証 |
 
 ## 実装メモ
 

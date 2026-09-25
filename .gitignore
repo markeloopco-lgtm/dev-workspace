@@ -6,4 +6,18 @@ output/*
 !input/.gitkeep
 !output/.gitkeep
 *.psd
+# work/ = scripts/analyze_video.py の旧既定の保存先(参考動画を含む)
 work/
+
+# 動画分析・制作(videolab)
+# refs/ = 参考動画(他人の著作物。絶対にコミットしない)
+# analysis/ = 解析結果(キーフレーム等に参考動画の複製を含む)
+# renders/ = 制作物・キャッシュ / assets/ = 自分の素材(ライセンス管理のためコミットしない)
+.venv-video/
+.env
+.env.*
+refs/
+analysis/
+renders/
+assets/*
+!assets/README.md

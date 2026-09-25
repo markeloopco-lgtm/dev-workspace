@@ -1,0 +1,51 @@
+# サンプル台本: 動作確認用の短い1本(約1分)。素材ファイル無しで作れる(宇宙シーンはプログラム描画)。
+#   python scripts/vlab.py produce episodes/sample_moon_half.yaml --tts dummy --draft   # 音声エンジン無しで試す
+#   python scripts/vlab.py produce episodes/sample_moon_half.yaml --check               # VOICEVOXで本番
+#
+# 登場人物・台詞はオリジナル。参考チャンネルのキャラクター名・決め台詞・設定は使わないこと。
+# 科学的な内容は出典で確認してから公開する(下の sources 参照)。
+title: もしも月が今の半分の距離にあったら
+voices:
+  # 話者IDは VOICEVOX を起動して `python scripts/vlab.py voices` で確認できる。
+  # 公開時は概要欄に「VOICEVOX:キャラ名」のクレジットが必要(produceが credits.txt を書き出す)。
+  ナレーター: {engine: voicevox, speaker: 11, speed: auto}   # 玄野武宏(ノーマル)
+  教授: {engine: voicevox, speaker: 42, speed: auto}         # ちび式じい
+telop:
+  speaker_colors: {教授: "#b8f5c8"}
+sources:
+  - 潮汐力は距離の3乗に反比例（国立天文台「潮の満ち引き」ほか一般的な天文学の教科書）
+  - 公転周期はケプラーの第3法則 T^2 ∝ a^3（月の恒星月 27.3日 × 0.5^1.5 ≈ 9.7日）
+  - 見かけの大きさは距離に反比例、明るさは距離の2乗に反比例
+credits: []
+scenes:
+  - id: hook
+    title: 月が半分の距離に来たら
+    lines:
+      - {speaker: ナレーター, text: "もしも、月が今の半分の距離まで近づいたら……？"}
+      - {speaker: 教授, text: "夜空の景色も、海の姿も、まるで別の星になってしまうぞ。"}
+    visuals:
+      - {type: space, template: planet, params: {preset: moon, size: 0.55}, camera: zoom_in}
+      - {type: space, template: planet, params: {preset: earth, size: 0.8, sun_angle: 50}}
+  - id: size
+    lines:
+      - {speaker: ナレーター, text: "まず、見た目の大きさは今の2倍。面積にすると4倍です。", callout: "見た目 2倍"}
+      - {speaker: 教授, text: "満月の明るさも、およそ4倍になる。夜道で本が読めるほどじゃ。"}
+    visuals:
+      - {type: space, template: planet, params: {preset: moon, size: 0.9, sun_angle: 10}}
+      - {type: space, template: planet_compare, params: {presets: [moon, moon], size_ratio: 2.0}}
+  - id: tide
+    title: 潮を起こす力は8倍
+    lines:
+      - {speaker: ナレーター, text: "問題は潮の満ち引きです。潮を起こす力は、距離の3乗に反比例します。"}
+      - {speaker: 教授, text: "距離が半分なら、その力は8倍。海岸線は毎日、大きく書き換わるじゃろう。", callout: "潮を起こす力 8倍"}
+    visuals:
+      - {type: space, template: planet, params: {preset: earth, size: 0.95, rotation_speed: 12}}
+      - {type: color, color: "#0b1d3a", color2: "#1e5aa8"}
+  - id: month
+    lines:
+      - {speaker: ナレーター, text: "さらに、月が地球を回る周期は、約27日から約10日に縮まります。"}
+      - {speaker: 教授, text: "ひと月が10日。カレンダーも作り直しじゃな。"}
+    visuals:
+      - {type: space, template: planet_compare, params: {presets: [earth, moon], size_ratio: 0.27}, camera: pan_left}
+      - {type: space, template: starfield, params: {speed: 0.6}}
+    pause_after: 1.2
