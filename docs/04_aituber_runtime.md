@@ -160,3 +160,21 @@ AITuberKit側は `NEXT_PUBLIC_SELECT_VOICE="stylebertvits2"` と
 
 恒常的な費用が発生し得るのは「Cubism PROライセンス（トライアル後）」
 「Gemini無料枠超過」「収益化時の各種商用ライセンス」の3点のみ。
+
+## 補足: VoiceStudio（Mac）で台本を長文読み上げ
+
+動画ナレーション用に、VoiceStudio（OSS / AGPL-3.0、Apple Siliconでローカル動作）を
+Macに導入済み（`curl -fsSL https://voicestudio.sh/install | sh`）。
+
+- API: `http://localhost:3900/v1/audio/speech`（OpenAI互換。1回4,096文字まで、ローカルはキー不要）
+- 長文は1回で送ると失敗しやすいので `scripts/voicestudio_long_tts.py` を使う:
+
+  ```sh
+  python3 scripts/voicestudio_long_tts.py 台本.txt 出力.wav [--voice <声のID>]
+  ```
+
+  句点単位で約200字ずつに分割して生成→無音を挟んで1つのWAVに結合。
+  `# 見出し` 行は章区切り扱いで読まない。失敗しても同じコマンドの再実行で続きから再開。
+  `--dry-run` で分割結果だけ確認できる。声のIDは `curl http://localhost:3900/v1/audio/voices`。
+- 生成音声にはAudioSealの不可聴透かしが入る（設定 > Privacyで切替可）。
+  YouTubeではリアルな合成音声は透かしの有無に関係なく「改変・合成コンテンツ」の開示対象。
