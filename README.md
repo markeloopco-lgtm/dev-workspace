@@ -70,6 +70,7 @@ export SEE_THROUGH_DIR=/path/to/see-through
 | `notebooks/see_through_free_gpu.ipynb` | See-throughをKaggle/Colab無料GPU枠で回すノートブック |
 | `tests/run_selftest.py` | ラウンドトリップ検証 (GPU不要) |
 | `video_style/` | お手本動画の編集スタイルを全フレーム解析して再現用プロファイル化するツール ([README](video_style/README.md)) |
+| `video_edit/` | トーク動画の自動カット編集（文字起こし→Markdownの編集プラン→テロップ入り書き出し） ([README](video_edit/README.md)) |
 
 ## 実装メモ
 
