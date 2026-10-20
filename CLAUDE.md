@@ -4,7 +4,8 @@
    チャット自動応答つきYouTube配信（ほぼ放置運用）を行う
 2. **videolab**: 参考動画（VAIENCE等の科学解説CG動画）をフレーム単位で計測して作風を数値化し、
    同じテンポ・品質のオリジナル動画を台本YAMLから自動で組み立てて採点する（docs/06・07）。
-   フリー動画素材（Pexels / Pixabay）を検索語で取ってきて組み立てることもできる（docs/08）
+   フリー動画素材（Pexels / Pixabay）を検索語で取ってきて組み立てることもできる（docs/08）。
+   立ち絵つきの物語動画（ずんだもん系）を、ふつうの文章の台本（かんたん台本）＋見た目の共通設定（look）から作れる（docs/09）
 
 ## ユーザーについて
 
@@ -13,15 +14,21 @@
 - **完全無料方針**（有料サービスの提案は明示的に求められた時のみ）
 - Claude Pro/Maxサブスクリプション利用（API課金なし）
 
-## 現在の状態（2026-09-25時点）
+## 現在の状態（2026-10-20時点）
 
 ソフトウェア部分は完成・検証済み。残タスクは実機作業のみ:
 
 - [ ] チャンネル「ずんだもん末路ストーリー」 https://www.youtube.com/@zunda-matsuro を名前 `zunda_matsuro` で分析し、
       台本を入れれば同じ作風で作れる状態にする（PCで `prompts/channel_style_analysis.md` の手順。2026-10-20依頼）。
-      成果物 `configs/style_zunda_matsuro.yaml`・`configs/structure_zunda_matsuro.md`・`configs/style_spec_zunda_matsuro.md`
-      をこのブランチにプッシュ → 足りない機能（立ち絵の口パク・表情の切り替え等）は**ユーザーの了承後に**追加。
-      ずんだもんの絵は作らない・似せて生成しない（公式ガイドラインに沿って配布されている立ち絵素材をユーザーが入手）
+      **制作側の機能は実装・検証済み**（2026-10-20。立ち絵の口パク・まばたき・表情、話者ごとの字幕色、台詞の効果音、
+      かんたん台本 → `vlab make`、look。docs/09・`tests/run_character_selftest.py`）。残りはPCでの作業:
+      1) 分析 → 成果物 `configs/style_zunda_matsuro.yaml`・`configs/structure_zunda_matsuro.md`・`configs/style_spec_zunda_matsuro.md`
+      2) 見せ方の仕様を `configs/look_zunda_story.yaml` に反映（いまの値は**仮**。docs/09「分析結果を反映する」）し、
+         `style:` の行を有効にする → `vlab make episodes/sample_story.txt --draft` で参考動画と見比べる
+      3) ユーザーが公式ガイドラインに沿って配布されている立ち絵素材を入手 → `assets/chars/zundamon/` に
+         `<表情>.png`・`_open`・`_half`・`_blink` で置く（PSDならレイヤーを切り替えてPNG書き出し。docs/09）
+      4) VOICEVOXで `vlab voices` → look の話者IDを確認
+      ずんだもんの絵は作らない・似せて生成しない。クラウド環境では動作確認に仮の立ち絵（`scripts/make_placeholder_character.py`）を使う
 - [ ] 参考動画 https://youtu.be/lZFXcN2tA4s をこのPCで分析。クラウド環境ではYouTubeへの接続がネットワーク設定で遮断され未実施。
       ユーザーによると、この動画は**フリー動画素材を組み合わせて作られている**。
       1) `vlab watch <URL>`（URLのままGemini）で構成を把握 → 2)（規約を理解した上で）`vlab fetch` → `vlab analyze` →
@@ -65,7 +72,7 @@
 - `docs/06_video_analysis.md`〜`07_video_production.md`: videolab（参考動画のフレーム分析 → 目標スタイル → 台本から制作・採点）。
   `docs/06_reference_video_analysis.md` は analyze_video.py（簡易レポート・shots.csv・compare）の説明で別物
 - `scripts/vlab.py`: videolabのコマンド（doctor / watch / fetch / analyze / frames / aggregate /
-  compare / annotate / purge / voices / new-episode / produce / stock）
+  compare / annotate / purge / voices / new-episode / produce / stock / script / make）
 - `videolab/stock.py` + `docs/08_stock_footage.md`: フリー動画素材（Pexels / Pixabay）の検索・取得・クレジット記録。
   台本に `{type: stock, query: 検索語}` と書き `vlab stock 台本` で取得 → 制作時に `type: video` へ差し替え。
   見本 `episodes/sample_stock.yaml`、検証 `tests/run_stock_selftest.py`（ネット不要。stock/episode を触ったら実行）
@@ -77,6 +84,11 @@
   （`channel_style_analysis.md` = チャンネル単位の作風分析の通し手順と、見せ方の仕様の書き方）
 - `tests/run_video_selftest.py`: 正解つき合成動画での解析精度＋制作ラウンドトリップ検証。
   **videolabのコード変更時は必ず実行**（`--quick` で宇宙シーン抜きの短縮版）
+- `docs/09_character_story.md`: 立ち絵つきの物語動画（ずんだもん系）。`videolab/produce/characters.py`（口パク・まばたき・
+  表情・跳ね）、`videolab/produce/script_text.py`（かんたん台本 → 台本YAML。`vlab script` / `vlab make`）、
+  `configs/look_zunda_story.yaml`（見た目の共通設定。台本の `look:` で下敷きにする）、見本 `episodes/sample_story.txt`、
+  雛形 `episodes/_template_story.txt`（`vlab new-episode … -o xxx.txt`）、仮の立ち絵 `scripts/make_placeholder_character.py`。
+  検証 `tests/run_character_selftest.py`（立ち絵・episode・timeline・compose・script_text を触ったら実行）
 
 ## 重要な技術的前提（再調査不要）
 
@@ -96,6 +108,10 @@
 - Linux（クラウド）でvideolabのテストを回す時は日本語フォントが要る（Windowsのフォント前提のため）。
   制作側（telop.find_font）は `WINDIR` の Fonts\meiryob.ttc 等、合成動画（tests/video_fixtures.py）は
   /usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc 等を探すので、そこに日本語フォントを置く（リンク可）と通る
+- 立ち絵の口パクは台詞の音声の音量（1コマごと）を、その台詞の静かな所と大きい所の差で正規化して3段階にする
+  （声の大きさ・エンジンが違っても同じ動き）。暗転中は立ち絵の色だけ暗くして重ねる（透明度を下げると背景が透ける）
+- look・台本の素材パスは 台本のフォルダ → 作業フォルダ → リポジトリ直下 の順に探す（look の中はリポジトリ直下から書く）。
+  かんたん台本で話者として扱うのは look の `voices` / `characters` にある名前だけ（他の「○○:」はナレーションの文）
 
 ### videolab の前提（再調査不要・2026-09調査）
 

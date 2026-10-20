@@ -48,6 +48,17 @@ py -3.12 -m venv .venv-video
 （`vlab stock 台本.yaml`。見本 `episodes/sample_stock.yaml`）。
 検証: `python tests/run_video_selftest.py`（正解つき合成動画で解析精度と制作ラウンドトリップを確認）。
 
+### 立ち絵つきの物語動画（ずんだもん系）
+
+ふつうの文章で書いた台本（`ずんだもん(笑顔): 今日も余裕なのだ！`）から、立ち絵の口パク・まばたき・表情、
+話者ごとの色の字幕、場面タイトル、効果音つきの動画を作る。見た目は look（`configs/look_zunda_story.yaml`）に
+まとめてあるので、別の台本でも同じ作風になる。手順は [docs/09](docs/09_character_story.md)。
+
+```powershell
+.venv-video\Scripts\python.exe scripts\vlab.py new-episode "タイトル" -o episodes\my_story.txt   # 雛形
+.venv-video\Scripts\python.exe scripts\vlab.py make episodes\my_story.txt --draft               # 動画にする
+```
+
 参考動画の**簡易レポート**（編集テンポ・つなぎ方・素材ごとの一覧 shots.csv・画面配置・色・音量・自分の動画との比較）は `scripts/analyze_video.py` でも作れる（[docs/06_reference_video_analysis.md](docs/06_reference_video_analysis.md)。OpenCV不要で軽い）。
 
 ## セットアップ（Live2D側）
@@ -120,6 +131,13 @@ export SEE_THROUGH_DIR=/path/to/see-through
 | `docs/08_stock_footage.md` | フリー動画素材（Pexels / Pixabay）で作る手順 |
 | `videolab/stock.py` | フリー素材の検索・取得・クレジット記録（`vlab stock`） |
 | `tests/run_stock_selftest.py` | フリー素材取得の検証（ネット・APIキー不要） |
+| `docs/09_character_story.md` | 立ち絵つきの物語動画をかんたん台本から作る手順 |
+| `videolab/produce/characters.py` | 立ち絵の口パク・まばたき・表情・跳ね |
+| `videolab/produce/script_text.py` | かんたん台本 → 台本YAML（`vlab script` / `vlab make`） |
+| `configs/look_zunda_story.yaml` | ずんだもん系の物語動画の見た目（声・立ち絵・字幕。分析結果で直す） |
+| `episodes/sample_story.txt` | かんたん台本の見本（雛形は `episodes/_template_story.txt`） |
+| `scripts/make_placeholder_character.py` | 動作確認用の仮の立ち絵（単純な図形のオリジナル） |
+| `tests/run_character_selftest.py` | 立ち絵・look・かんたん台本の検証（ネット・音声エンジン不要） |
 
 ## 実装メモ
 

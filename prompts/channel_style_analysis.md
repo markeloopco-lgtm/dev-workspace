@@ -48,13 +48,19 @@ prompts/channel_style_analysis.md を読んで、チャンネル https://www.you
 2. 構成の型: prompts/structure_analysis.md の手順。まとめは `configs/structure_<名前>.md` に書く
 3. 見せ方の仕様: 下の「見せ方の仕様の書き方」に沿って、まず各動画の `analysis\動画ID\style_spec.md`、
    最後に共通点を `configs/style_spec_<名前>.md` にまとめる
+4. 見た目の共通設定（look）に反映する: 立ち絵つきの物語動画（ずんだもん系）なら `configs/look_zunda_story.yaml` を直接直す
+   （別の作風なら `configs/look_<名前>.yaml` を新しく作る）。項目の対応は docs/09「分析結果を反映する」。
+   `style:` の行は手順1で作った `configs/style_<名前>.yaml` にする。
+   直したら `vlab make episodes\sample_story.txt --draft` で作り、`vlab frames` で参考動画の同じ種類の場面（話者が替わる所・
+   字幕・場面タイトル）と見比べて、位置・大きさ・色を詰める（立ち絵が未入手なら `scripts\make_placeholder_character.py` の仮の立ち絵で）
 
 ### Step 5: 再現に足りないものを洗い出して報告する
 
 `configs/style_spec_<名前>.md` の最後の対応表をもとに、ユーザーへ次の3つを報告する:
 
-- いまの videolab（episodes/README.md の書式）で再現できること
-- 機能が足りないこと（例: 立ち絵の口パク・表情の切り替え）と、その作り方の案
+- いまの videolab（episodes/README.md の書式・docs/09）で再現できること
+  （立ち絵の口パク・まばたき・表情・話者ごとの字幕色・場面タイトル・強調文字・台詞の効果音は実装済み）
+- 機能が足りないこと（例: 字幕の出し方のアニメーション・立ち絵の拡大演出）と、その作り方の案
 - ユーザーが用意する素材（立ち絵・BGM・効果音・背景）と、入手先の候補と利用条件
 
 **機能の追加はユーザーの了承を得てから**。了承されたら、追加する前に作業計画を見せる。
@@ -62,7 +68,8 @@ prompts/channel_style_analysis.md を読んで、チャンネル https://www.you
 ### Step 6: 保存と後片付け
 
 1. コミットしてよいのは `configs/style_<名前>.yaml`・`configs/structure_<名前>.md`・
-   `configs/style_spec_<名前>.md` だけ（数値と抽象化した記述）。`refs/` と `analysis/` は入れない（.gitignore済み）
+   `configs/style_spec_<名前>.md` と、直した look（`configs/look_*.yaml`）だけ（数値と抽象化した記述）。
+   `refs/` と `analysis/` は入れない（.gitignore済み）
 2. ブランチ `claude/video-frame-analysis-cyhxvk` にプッシュする（クラウドのセッションからも続きができるように）
 3. 研究が済んだら docs/06_video_analysis.md の Step 7（purge）で参考動画の複製を消す
 

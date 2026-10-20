@@ -9,6 +9,10 @@ python scripts/vlab.py produce episodes/my_first.yaml --tts dummy --draft       
 python scripts/vlab.py produce episodes/my_first.yaml --check                    # 本番 + 採点
 ```
 
+立ち絵つきの物語動画（ずんだもん系）は、ふつうの文章で書く**かんたん台本**（`.txt`）からも作れる
+（`vlab make episodes/sample_story.txt`。書き方は [docs/09](../docs/09_character_story.md)）。
+かんたん台本はこのYAMLに自動変換されるので、下の項目はどちらにも効く。
+
 ## 全体の項目
 
 | 項目 | 必須 | 内容 |
@@ -23,6 +27,10 @@ python scripts/vlab.py produce episodes/my_first.yaml --check                   
 | `sources` | | 台本の根拠（URL・書籍）。**公開前に必ず確認する** |
 | `credits` | | 概要欄に載せる素材クレジット（`credits.txt` に書き出される） |
 | `style` / `output` / `resolution` / `fps` | | 目標スタイル・出力先・解像度（既定 1920x1080）・fpsの上書き |
+| `look` | | 見た目の共通設定ファイル（例 `configs/look_zunda_story.yaml`）。中身をこの台本の下敷きにする（台本の項目が優先・`credits` は足し算） |
+| `characters` / `cast` | | 立ち絵（下記）と、立ち絵を出すキャラの既定 |
+| `default_visual` | | `visuals` の無いシーンの背景（省略時は星空） |
+| `default_speaker` | | `speaker` を省略した台詞の話者 |
 
 ## voices（話者）
 
@@ -65,6 +73,8 @@ scenes:
 - 台詞の `callout:` は画面中央に「ポン」と出す強調文字（例 `callout: "潮を起こす力 8倍"`）。
   見た目は全体の `callout_style:`（`size` `color` `outline` `y`）で変えられる
 - 台詞ごとの `gap:` で次の台詞までの間（秒）を個別に指定できる
+- 台詞の `se:` は台詞の頭で鳴らす効果音（`se: assets/se/shock.wav`、または `{file, at, volume_db}`。`at` は台詞の頭からの秒数）
+- 台詞の `face:` は話者の立ち絵の表情、`faces: {ずんだもん: sad}` は話していないキャラの表情（下記 characters）
 - 台詞の無いシーンは `duration: 3.0` のように秒数を書く（アイキャッチ等）
 
 ## visuals（映像素材）の種類
@@ -100,6 +110,7 @@ visuals:
 | `opacity` `flip` | 不透明度（0〜1）、左右反転 |
 
 キャラクターは**オリジナルのデザイン**にする（参考チャンネルのキャラクターに似せない）。
+ずんだもん等の公開キャラクターは、公式の利用ガイドラインに沿って配布されている立ち絵を使う（口パクさせるなら下の `characters`。docs/09）。
 
 ### camera（カメラワーク）
 
@@ -120,6 +131,37 @@ visuals:
 | `black_hole` | `disk_color`, `tilt`, `size` |
 | `starfield` | `speed`（0=静止、>0で前進）, `density` |
 
+## characters（立ち絵）
+
+話者の立ち絵を画面の下に出し、声に合わせて口パク・まばたきさせる。表情は台詞ごとに切り替えられる
+（次に変えるまで続く）。画像の用意と置き方は [docs/09](../docs/09_character_story.md)。
+
+```yaml
+characters:
+  ずんだもん: {dir: assets/chars/zundamon, default: normal, x: 0.82, height: 0.74, bottom: 1.04}
+cast: [ずんだもん]                   # 立ち絵を出すキャラ（省略時は、そのシーンで話すキャラ）
+scenes:
+  - cast: []                         # このシーンは立ち絵を出さない
+    lines:
+      - {speaker: ナレーター, text: "その頃……", faces: {ずんだもん: sad}}
+  - lines:
+      - {speaker: ずんだもん, text: "やったのだ！", face: happy}
+```
+
+| キー | 既定 | 内容 |
+|---|---|---|
+| `dir` | | 立ち絵のフォルダ。`<表情>.png`（口閉じ・必須）・`_open`・`_half`・`_blink` |
+| `faces` | | フォルダを使わず表情ごとに指定する場合 `{happy: {base: a.png, open: b.png}}` |
+| `default` | normal | 最初の表情 |
+| `x` / `height` / `bottom` | 0.84 / 0.72 / 1.03 | 中心の横位置・高さ・下端（画面比） |
+| `flip` | false | 左右反転 |
+| `hop` / `breathe` | 0.012 / 0.003 | 話し始めの跳ね / 待機中の上下（画面の高さ比。0で無し） |
+| `silent_dim` | 0 | 話していない時に暗くする度合い（0〜1） |
+| `blink_every` | [2.5, 5.5] | まばたきの間隔（秒の範囲） |
+
+表情は日本語の別名でも書ける（普通→normal、笑顔→happy、悲しい→sad、驚き→surprised、怒り→angry）。
+`--draft` では、立ち絵のフォルダが無いキャラは立ち絵なしで進む（素材TODOに出る）。
+
 ## telop（テロップの見た目）
 
 | キー | 既定 | 内容 |
@@ -132,6 +174,7 @@ visuals:
 | `max_chars` | 22 | 1枚に入れる最大文字数（超えたら句読点・文節で分割） |
 | `band` | 無し | 帯を敷く場合の色（例 `"#00000099"`） |
 | `speaker_colors` | 無し | 話者ごとの文字色 `{教授: "#b8f5c8"}` |
+| `speaker_styles` | 無し | 話者ごとの見た目の上書き `{ずんだもん: {color: "#ffffff", outline: "#2f8f3a"}}`（`size` `band` なども可） |
 
 ## 守ること
 
