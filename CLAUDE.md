@@ -26,7 +26,8 @@
       2) 見せ方の仕様を `configs/look_zunda_story.yaml` に反映（いまの値は**仮**。docs/09「分析結果を反映する」）し、
          `style:` の行を有効にする → `vlab make episodes/sample_story.txt --draft` で参考動画と見比べる
       3) ユーザーが公式ガイドラインに沿って配布されている立ち絵素材を入手 → `assets/chars/zundamon/` に
-         `<表情>.png`・`_open`・`_half`・`_blink` で置く（PSDならレイヤーを切り替えてPNG書き出し。docs/09）
+         `<表情>.png`・`_open`・`_half`・`_blink` で置く（PSDなら `scripts/psd_faces.py inspect --recipe` →
+         レシピを直す → `export`。docs/09）
       4) VOICEVOXで `vlab voices` → look の話者IDを確認
       ずんだもんの絵は作らない・似せて生成しない。クラウド環境では動作確認に仮の立ち絵（`scripts/make_placeholder_character.py`）を使う
 - [ ] 参考動画 https://youtu.be/lZFXcN2tA4s をこのPCで分析。クラウド環境ではYouTubeへの接続がネットワーク設定で遮断され未実施。
@@ -87,7 +88,8 @@
 - `docs/09_character_story.md`: 立ち絵つきの物語動画（ずんだもん系）。`videolab/produce/characters.py`（口パク・まばたき・
   表情・跳ね）、`videolab/produce/script_text.py`（かんたん台本 → 台本YAML。`vlab script` / `vlab make`）、
   `configs/look_zunda_story.yaml`（見た目の共通設定。台本の `look:` で下敷きにする）、見本 `episodes/sample_story.txt`、
-  雛形 `episodes/_template_story.txt`（`vlab new-episode … -o xxx.txt`）、仮の立ち絵 `scripts/make_placeholder_character.py`。
+  雛形 `episodes/_template_story.txt`（`vlab new-episode … -o xxx.txt`）、仮の立ち絵 `scripts/make_placeholder_character.py`、
+  立ち絵PSD → 表情ごとのPNG `scripts/psd_faces.py`（PSDToolKit形式の * 選択肢・! 常に表示。レシピYAMLで指定）。
   検証 `tests/run_character_selftest.py`（立ち絵・episode・timeline・compose・script_text を触ったら実行）
 
 ## 重要な技術的前提（再調査不要）

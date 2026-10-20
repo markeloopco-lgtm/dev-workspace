@@ -3,7 +3,8 @@
 
 音声エンジン不要(dummy の仮音声)・ネット不要。次を確認する:
   - 口の開き: 無音では閉じ、声の山と谷で開閉する(声の大きさが違っても同じ動き)
-  - 立ち絵フォルダの読み取り(<表情>.png / _open / _half / _blink)と仮の立ち絵の書き出し
+  - 立ち絵フォルダの読み取り(<表情>.png / _open / _half / _blink)と仮の立ち絵の書き出し、
+    透明な所の色が縮小で縁ににじまないこと、PSD(* の選択肢・! の常に表示)からの書き出し
   - look の下敷き(台本が優先・credits は足し算・映像の無い場面に default_visual)
   - かんたん台本 → 台本YAML(話者・表情・場面と台詞の [ ]・ナレーション扱い・書き間違いのエラー)
   - 台本の誤り(無い表情・無いキャラ・立ち絵フォルダが無い)と、下書きでの省略
@@ -31,7 +32,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from videolab.produce.characters import CharacterStage, mouth_levels, scan_face_dir  # noqa: E402
+from videolab.produce.characters import CharacterStage, mouth_levels, resize_rgba, scan_face_dir  # noqa: E402
 from videolab.produce.episode import EpisodeError, load_episode  # noqa: E402
 from videolab.produce.script_text import ScriptError, convert, parse_script  # noqa: E402
 
@@ -110,6 +111,107 @@ def _green_px(img: np.ndarray) -> int:
     return int(((g > r + 50) & (g > b + 30)).sum())
 
 
+# PSD の色(レイヤーごとに別の色にして、書き出した絵にどのレイヤーが出たかを色で確かめる)
+PSD_LAYERS = {
+    "!体": ((120, 150), (0, 0, 255), 140, 40), "汗": ((10, 10), (0, 255, 255), 170, 20),
+    "目/*普通目": ((80, 20), (255, 255, 255), 60, 60), "目/*目閉じ": ((80, 6), (0, 0, 0), 67, 60),
+    "眉/*普通眉": ((80, 8), (128, 128, 128), 40, 60), "眉/*困り眉": ((80, 8), (120, 60, 0), 40, 60),
+    "口/*むふ": ((30, 6), (90, 0, 0), 100, 85), "口/*ほあ": ((30, 14), (200, 0, 0), 96, 85),
+    "口/*ほあー": ((30, 24), (255, 0, 0), 92, 85),
+}
+PSD_VISIBLE = {"!体": False, "汗": True, "目/*普通目": True, "目/*目閉じ": False, "眉/*普通眉": True,
+               "眉/*困り眉": False, "口/*むふ": False, "口/*ほあ": False, "口/*ほあー": True}
+PSD_RECIPE = """
+hide: [汗]
+faces:
+  normal:
+    show: [眉/*普通眉, 目/普通目]
+    mouth: {closed: 口/*むふ, half: 口/ほあ, open: 口/*ほあー}
+    blink: 目閉じ
+  sad:
+    show: [眉/困り眉, 目/*普通目]
+    mouth: {closed: むふ, open: ほあー}
+"""
+
+
+def _psd_section(tmp: Path, check) -> str:
+    """立ち絵PSD → 表情ごとのPNG(scripts/psd_faces.py)。psd-tools が無ければ省略。"""
+    try:
+        from psd_tools import PSDImage
+        from psd_tools.api.layers import Group, PixelLayer
+    except ImportError:
+        return "（psd-tools が無いためPSDの書き出しは省略）"
+    pdir = tmp / "psd"
+    pdir.mkdir()
+    try:   # 合成PSDを作る(レイヤーを作るAPIは psd-tools 1.10 以降)
+        psd = PSDImage.new("RGBA", (200, 300))
+        groups = {}
+        for path, (size, color, top, left) in PSD_LAYERS.items():
+            parent = psd
+            if "/" in path:
+                gname = path.split("/")[0]
+                if gname not in groups:
+                    groups[gname] = Group.new(psd, gname)
+                parent = groups[gname]
+            lyr = PixelLayer.frompil(Image.new("RGBA", size, color + (255,)), parent, "layer", top, left)
+            lyr.name = path.split("/")[-1]
+            lyr.visible = PSD_VISIBLE[path]
+        psd.save(pdir / "chara.psd", encoding="utf-8")
+    except (AttributeError, TypeError) as e:
+        return f"（この psd-tools では検証用のPSDを作れないため省略: {e}）"
+    (pdir / "recipe.yaml").write_text(PSD_RECIPE, encoding="utf-8")
+    tool = str(ROOT / "scripts" / "psd_faces.py")
+    out = tmp / "chars" / "from_psd"
+    r = subprocess.run([sys.executable, tool, "export", str(pdir / "chara.psd"), str(pdir / "recipe.yaml"),
+                        "-o", str(out)], capture_output=True, text=True)
+    if not check(r.returncode == 0, f"PSDの書き出し: {r.stdout[-300:]} {r.stderr[-300:]}"):
+        return ""
+    files = sorted(p.name for p in out.glob("*.png"))
+    check(files == ["normal.png", "normal_blink.png", "normal_half.png", "normal_open.png", "sad.png",
+                    "sad_open.png"], f"書き出したファイル {files}")
+    imgs = {f: np.array(Image.open(out / f).convert("RGBA")) for f in files}
+    check(len({im.shape for im in imgs.values()}) == 1, "表情ごとの絵の大きさがそろっていない")
+
+    def has(f, rgb):
+        im = imgs[f]
+        return int(((np.abs(im[..., :3].astype(int) - rgb).max(axis=2) <= 3) & (im[..., 3] > 250)).sum())
+
+    want = {  # ファイル: (出ているはずの色, 出ていないはずの色)
+        "normal.png": ([(0, 0, 255), (90, 0, 0), (255, 255, 255), (128, 128, 128)],
+                       [(255, 0, 0), (200, 0, 0), (0, 255, 255), (0, 0, 0)]),
+        "normal_open.png": ([(255, 0, 0)], [(90, 0, 0), (200, 0, 0)]),
+        "normal_half.png": ([(200, 0, 0)], [(90, 0, 0), (255, 0, 0)]),
+        "normal_blink.png": ([(0, 0, 0), (90, 0, 0)], [(255, 255, 255)]),
+        "sad.png": ([(120, 60, 0), (90, 0, 0)], [(128, 128, 128), (0, 255, 255)]),
+        "sad_open.png": ([(120, 60, 0), (255, 0, 0)], [(90, 0, 0)]),
+    }
+    for f, (yes, no) in want.items():
+        if f in imgs:
+            check(all(has(f, c) for c in yes) and not any(has(f, c) for c in no),
+                  f"{f} のレイヤーの出し方: 出る {[has(f, c) for c in yes]} / 出ない {[has(f, c) for c in no]}")
+    sf_ = scan_face_dir(out)
+    check(set(sf_) == {"normal", "sad"} and set(sf_["normal"]) == {"base", "open", "half", "blink"},
+          f"書き出した立ち絵の読み取り {sf_}")
+    # レシピの下書き(読めるYAMLで、口のフォルダを見つけている)・名前の誤りは候補つきで止まる
+    draft = pdir / "draft.yaml"
+    r = subprocess.run([sys.executable, tool, "inspect", str(pdir / "chara.psd"), "--recipe", str(draft)],
+                       capture_output=True, text=True)
+    d = yaml.safe_load(draft.read_text(encoding="utf-8")) if draft.exists() else {}
+    check(r.returncode == 0 and "選択肢" in r.stdout and (d.get("faces") or {}).get("normal", {}).get("blink")
+          == "目/*目閉じ" and d["faces"]["normal"]["mouth"]["closed"] == "口/*ほあー",
+          f"レシピの下書き: {r.stderr[-200:]} {d}")
+    (pdir / "bad.yaml").write_text("faces:\n  normal: {mouth: {closed: 口/*わあ}}\n", encoding="utf-8")
+    r = subprocess.run([sys.executable, tool, "export", str(pdir / "chara.psd"), str(pdir / "bad.yaml"),
+                        "-o", str(tmp / "chars" / "bad")], capture_output=True, text=True)
+    check(r.returncode == 1 and "わあ" in r.stderr and "*むふ" in r.stderr, f"名前の誤り: {r.stderr[-300:]}")
+    small = tmp / "chars" / "from_psd_small"
+    r = subprocess.run([sys.executable, tool, "export", str(pdir / "chara.psd"), str(pdir / "recipe.yaml"),
+                        "-o", str(small), "--max-height", "100"], capture_output=True, text=True)
+    sizes = {Image.open(p).size for p in small.glob("*.png")} if r.returncode == 0 else set()
+    check(len(sizes) == 1 and next(iter(sizes))[1] == 100, f"縮小した書き出し {sizes} {r.stderr[-200:]}")
+    return "・PSDからの書き出し"
+
+
 def main() -> int:
     tmp = Path(tempfile.mkdtemp(prefix="char_selftest_"))
     errors = []
@@ -150,6 +252,17 @@ def main() -> int:
     of = scan_face_dir(odir)
     check(sorted(of) == ["normal", "smile"] and set(of["normal"]) == {"base", "open"},
           f"口閉じの絵が無い表情を除く {of}")
+
+    # 透明な所の色(白)が、縮小した時に縁へにじまない
+    src = np.zeros((40, 40, 4), np.float32)
+    src[..., :3] = 255
+    src[:, :17] = (255, 0, 0, 255)
+    small = resize_rgba(src, 15, 15)
+    edge = small[(small[..., 3] > 5) & (small[..., 3] < 250)]
+    check(len(edge) and np.abs(edge[:, :3] - [255, 0, 0]).max() <= 2,
+          f"縮小で縁に透明部分の色がにじむ {edge[:3, :3].tolist() if len(edge) else '縁なし'}")
+
+    psd_note = _psd_section(tmp, check)
 
     # 3) look の下敷き
     (tmp / "assets").mkdir()
@@ -414,7 +527,8 @@ def main() -> int:
         for e in errors:
             print(f"  - {e}")
         return 1
-    print(f"[OK] 口パク・立ち絵フォルダ・look・かんたん台本・台本の誤り・出演/表情/まばたき/跳ね/暗転{produced}を確認 ({tmp})")
+    print(f"[OK] 口パク・立ち絵フォルダ{psd_note}・look・かんたん台本・台本の誤り・出演/表情/まばたき/跳ね/暗転"
+          f"{produced}を確認 ({tmp})")
     return 0
 
 

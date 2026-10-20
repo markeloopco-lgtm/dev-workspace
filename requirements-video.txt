@@ -9,6 +9,7 @@ soundfile>=0.12
 pyloudnorm>=0.1.1
 imageio-ffmpeg>=0.5      # ffmpegが未インストールでも最低限動かすための同梱バイナリ
 yt-dlp[default,deno]>=2026.8.19   # 参考動画の取得(YouTubeはJavaScriptランタイムdenoが必要)
+psd-tools>=1.9           # 立ち絵のPSD → 表情ごとのPNG(scripts/psd_faces.py。docs/09)
 
 # --- 任意(必要になったら入れる) ---
 # faster-whisper>=1.2     # 字幕が無い動画の文字起こし(CPU可)

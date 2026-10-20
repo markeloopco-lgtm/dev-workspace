@@ -64,6 +64,16 @@ def resolve_face(face, faces) -> str | None:
     return None
 
 
+def resize_rgba(img: np.ndarray, w: int, h: int) -> np.ndarray:
+    """透明な部分の色が縁ににじまないよう、色に透明度を掛けてから縮小し、元に戻す。"""
+    a = img[..., 3:4] / 255.0
+    pm = cv2.resize(np.concatenate([img[..., :3] * a, img[..., 3:4]], axis=2), (w, h),
+                    interpolation=cv2.INTER_AREA)
+    a2 = pm[..., 3:4] / 255.0
+    rgb = np.where(a2 > 1e-4, pm[..., :3] / np.maximum(a2, 1e-4), 0.0)
+    return np.concatenate([np.clip(rgb, 0, 255), pm[..., 3:4]], axis=2).astype(np.float32)
+
+
 def scan_face_dir(d: Path) -> dict:
     """フォルダの <表情>.png / <表情>_open.png などを表情ごとにまとめる(口を閉じた絵が無い表情は除く)。"""
     faces = {}
@@ -171,7 +181,7 @@ class CharacterStage:
             img = load_rgba(spec["faces"][face].get(variant) or spec["faces"][face]["base"])
             th = max(2, int(float(spec["height"]) * self.h))
             tw = max(2, int(img.shape[1] * th / img.shape[0]))
-            img = cv2.resize(img, (tw, th), interpolation=cv2.INTER_AREA)
+            img = resize_rgba(img, tw, th)
             if spec.get("flip"):
                 img = img[:, ::-1].copy()
             if dim > 0:

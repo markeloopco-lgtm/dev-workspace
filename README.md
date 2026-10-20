@@ -137,6 +137,7 @@ export SEE_THROUGH_DIR=/path/to/see-through
 | `configs/look_zunda_story.yaml` | ずんだもん系の物語動画の見た目（声・立ち絵・字幕。分析結果で直す） |
 | `episodes/sample_story.txt` | かんたん台本の見本（雛形は `episodes/_template_story.txt`） |
 | `scripts/make_placeholder_character.py` | 動作確認用の仮の立ち絵（単純な図形のオリジナル） |
+| `scripts/psd_faces.py` | 立ち絵のPSD（* の選択肢・! の常に表示）から表情ごとのPNGを書き出す |
 | `tests/run_character_selftest.py` | 立ち絵・look・かんたん台本の検証（ネット・音声エンジン不要） |
 
 ## 実装メモ

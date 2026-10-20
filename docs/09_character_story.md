@@ -59,8 +59,34 @@
 （台本でその表情を使うとエラーで教えてくれる）。全部のPNGは**同じ大きさ・同じ位置**で書き出すこと
 （ずれると口パクの時に絵が動いて見える）。
 
-配布素材がPSD（レイヤーで表情や口を切り替える形式）の場合は、画像編集ソフト
-（無料ならブラウザで動く Photopea など）でレイヤーの表示を切り替えて、上の組み合わせを1枚ずつPNGで書き出す。
+### 立ち絵がPSD（レイヤーで目・口・眉を切り替える形式）の場合
+
+`scripts/psd_faces.py` で、表情ごとのPNGをまとめて書き出せる。名前の先頭が `*` のレイヤーは
+「同じフォルダの中で1つだけ出す選択肢」、`!` は「常に表示」として扱う（PSDToolKit 形式の決まり）。
+
+```powershell
+# 1) レイヤーの一覧を見て、レシピ（どの表情でどのレイヤーを出すか）の下書きを作る
+.venv-video\Scripts\python.exe scripts\psd_faces.py inspect assets\chars\zundamon_src\立ち絵.psd --recipe assets\chars\zundamon_src\recipe.yaml
+# 2) recipe.yaml を直す（下の例）。Claude Code に一覧を見せて「表情ごとのレシピを書いて」と頼んでもよい
+# 3) 書き出す（全部の絵を同じ大きさ・同じ位置で切り抜くので、口パクで絵がずれない）
+.venv-video\Scripts\python.exe scripts\psd_faces.py export assets\chars\zundamon_src\立ち絵.psd assets\chars\zundamon_src\recipe.yaml -o assets\chars\zundamon
+```
+
+```yaml
+hide: [汗]                                   # 全部の表情で隠すレイヤー（任意。show: で全部に出すものも書ける）
+faces:
+  normal:
+    show: [眉/*普通眉, 目/*普通目]              # この表情で出すレイヤー（フォルダ/レイヤー）
+    mouth: {closed: 口/*むふ, half: 口/*ほあ, open: 口/*ほあー}   # 口閉じ・半開き・開き
+    blink: 目/*目閉じ                         # まばたきの目
+  happy:
+    show: [眉/*上がり眉, 目/*にっこり]
+    mouth: {closed: 口/*にやり, open: 口/*わあー}
+```
+
+レイヤー名の先頭の `*` `!` は省略してよく、名前が1つしか無ければフォルダも省略できる。名前を間違えると、
+その場所にあるレイヤーの一覧つきで止まる。PNGに書き出すのは「加工」にあたるので、配布者の規約で認められているか先に確認する。
+画像編集ソフト（無料ならブラウザで動く Photopea など）でレイヤーを切り替えて1枚ずつ書き出してもよい。
 
 ## かんたん台本の書き方
 

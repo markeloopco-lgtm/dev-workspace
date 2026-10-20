@@ -47,6 +47,7 @@ def run() -> int:
         ("pyloudnorm", "pyloudnorm", True),
         ("yt_dlp", '"yt-dlp[default,deno]"', False), ("faster_whisper", "faster-whisper", False),
         ("rapidocr", "rapidocr onnxruntime", False), ("scenedetect", "scenedetect", False),
+        ("psd_tools", "psd-tools", False),   # 立ち絵のPSD → PNG(scripts/psd_faces.py)
     ]:
         try:
             m = importlib.import_module(mod)
