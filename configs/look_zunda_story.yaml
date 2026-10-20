@@ -30,7 +30,7 @@ telop:
     ナレーター: {color: "#ffffff", outline: "#1d1d1d"}
     ずんだもん: {color: "#ffffff", outline: "#2f8f3a"}
 title_style: {size: 0.10, y: 0.45, duration: 2.2}          # 場面タイトル（[タイトル: 3日後…]）
-callout_style: {size: 0.12, color: "#ffef5a", outline: "#2b2b2b", y: 0.32}   # [強調: …]
+callout_style: {size: 0.12, color: "#ffef5a", outline: "#2b2b2b", y: 0.27}   # [強調: …]
 
 credits:
   - "立ち絵: （使った立ち絵素材の配布者名をここに書く）"
