@@ -201,6 +201,8 @@ prompts/structure_analysis.md を読んで、analysis/動画ID の構成を分�
 ```
 
 複数本やったら「まとめの手順で configs/structure_template.md を作って」と頼む。
+チャンネル単位で、見せ方（立ち絵・字幕・効果音など）の仕様まで含めて再現の準備をする時は、
+`prompts/channel_style_analysis.md` の通し手順を使う（成果物は `configs/style_<名前>.yaml` など）。
 台詞は引用せず、区間構成・つかみのパターン・驚きの間隔などの**抽象化した型**だけを残す。
 （文字起こし等はAnthropicに送信される。台本づくりの下敷きにはせず、型の抽出だけに使う）
 

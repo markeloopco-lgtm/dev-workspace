@@ -17,6 +17,11 @@
 
 ソフトウェア部分は完成・検証済み。残タスクは実機作業のみ:
 
+- [ ] チャンネル「ずんだもん末路ストーリー」 https://www.youtube.com/@zunda-matsuro を名前 `zunda_matsuro` で分析し、
+      台本を入れれば同じ作風で作れる状態にする（PCで `prompts/channel_style_analysis.md` の手順。2026-10-20依頼）。
+      成果物 `configs/style_zunda_matsuro.yaml`・`configs/structure_zunda_matsuro.md`・`configs/style_spec_zunda_matsuro.md`
+      をこのブランチにプッシュ → 足りない機能（立ち絵の口パク・表情の切り替え等）は**ユーザーの了承後に**追加。
+      ずんだもんの絵は作らない・似せて生成しない（公式ガイドラインに沿って配布されている立ち絵素材をユーザーが入手）
 - [ ] 参考動画 https://youtu.be/lZFXcN2tA4s をこのPCで分析。クラウド環境ではYouTubeへの接続がネットワーク設定で遮断され未実施。
       ユーザーによると、この動画は**フリー動画素材を組み合わせて作られている**。
       1) `vlab watch <URL>`（URLのままGemini）で構成を把握 → 2)（規約を理解した上で）`vlab fetch` → `vlab analyze` →
@@ -69,6 +74,7 @@
   `report.py`(HTMLレポート)、`produce/`(TTS・タイムライン・宇宙シーン・合成・ミックス)
 - `configs/style_profile.yaml`: 目標スタイル（数値のみ。aggregateで実測値に置き換える）
 - `episodes/`: 台本YAML（書式は `episodes/README.md`）、`prompts/`: Claude Code向け指示書
+  （`channel_style_analysis.md` = チャンネル単位の作風分析の通し手順と、見せ方の仕様の書き方）
 - `tests/run_video_selftest.py`: 正解つき合成動画での解析精度＋制作ラウンドトリップ検証。
   **videolabのコード変更時は必ず実行**（`--quick` で宇宙シーン抜きの短縮版）
 
