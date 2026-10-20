@@ -69,6 +69,7 @@ export SEE_THROUGH_DIR=/path/to/see-through
 | `configs/aituberkit.env.example` | AITuberKit環境変数テンプレ (本構成向け・検証済み) |
 | `notebooks/see_through_free_gpu.ipynb` | See-throughをKaggle/Colab無料GPU枠で回すノートブック |
 | `tests/run_selftest.py` | ラウンドトリップ検証 (GPU不要) |
+| `video_style/` | お手本動画の編集スタイルを全フレーム解析して再現用プロファイル化するツール ([README](video_style/README.md)) |
 
 ## 実装メモ
 

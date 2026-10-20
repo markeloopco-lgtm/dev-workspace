@@ -6,3 +6,6 @@ output/*
 !input/.gitkeep
 !output/.gitkeep
 *.psd
+# 動画スタイル解析: 解析結果（元動画・フレーム画像を含む）と自動取得モデルはコミットしない
+analysis/
+video_style/models/

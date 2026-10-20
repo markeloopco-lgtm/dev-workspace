@@ -1,0 +1,8 @@
+# 動画編集スタイル解析 (video_style/analyze_video.py) 用。ffmpeg/ffprobe は別途インストールしてPATHに通す
+numpy
+opencv-python-headless>=4.8
+Pillow
+PyYAML
+rapidocr-onnxruntime   # テロップ位置の検出（モデル同梱・GPU不要）
+webrtcvad-wheels       # 発話区間の検出
+yt-dlp                 # URLを直接渡すときだけ使う
