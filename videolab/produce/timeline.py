@@ -55,6 +55,9 @@ class Plan:
     bgm: list = field(default_factory=list)       # {file, start, end, volume_db}
     se: list = field(default_factory=list)        # {file, t, volume_db}
     scenes: list = field(default_factory=list)    # {id, start, end}
+    characters: dict = field(default_factory=dict)  # 立ち絵の設定(episode._norm_characters の結果)
+    cast: list = field(default_factory=list)        # {name, start, end} 立ち絵を出す区間
+    faces: list = field(default_factory=list)       # {t, name, face} 表情を切り替える時刻
 
     @property
     def duration(self) -> float:
@@ -184,6 +187,7 @@ def build_plan(ep: dict, style: dict, narrator, w: int, h: int, fps: float) -> P
         plan.scenes.append({"id": sc["id"], "start": round(s0, 3), "end": round(t, 3)})
     total = t + 0.8
     plan.total_frames = int(math.ceil(total * fps))
+    _plan_characters(ep, plan, scene_bounds)
 
     # ---- ショット割り
     shot_times = []   # (start_s, end_s, visual, scene, is_scene_start, cam_override)
@@ -266,6 +270,7 @@ def build_plan(ep: dict, style: dict, narrator, w: int, h: int, fps: float) -> P
     tstyle = ep.get("_telop_style", {})
     max_chars = int(tstyle.get("max_chars", 22))
     colors = tstyle.get("speaker_colors", {}) or {}
+    looks = tstyle.get("speaker_styles", {}) or {}
     next_start = [ln.start for ln in plan.lines[1:]] + [total]
     for ln, nxt in zip(plan.lines, next_start):
         src_line = _find_line(ep, ln)
@@ -285,8 +290,11 @@ def build_plan(ep: dict, style: dict, narrator, w: int, h: int, fps: float) -> P
             cs = ln.start + ln.dur * acc / tot
             acc += wgt
             ce = ln.start + ln.dur * acc / tot if acc < tot else end_all
-            plan.telops.append({"start": round(cs, 3), "end": round(ce, 3), "text": c,
-                                "speaker": ln.speaker, "color": colors.get(ln.speaker)})
+            ev = {"start": round(cs, 3), "end": round(ce, 3), "text": c,
+                  "speaker": ln.speaker, "color": colors.get(ln.speaker)}
+            if looks.get(ln.speaker):
+                ev["style"] = dict(looks[ln.speaker])
+            plan.telops.append(ev)
     tdur = float(ep.get("_title_style", {}).get("duration", 2.2))
     for sc, s0, s1 in scene_bounds:
         if sc.get("title"):
@@ -294,6 +302,10 @@ def build_plan(ep: dict, style: dict, narrator, w: int, h: int, fps: float) -> P
         for se in sc.get("se") or []:
             plan.se.append({"file": se["file"], "t": s0 + float(se.get("at", 0.0)),
                             "volume_db": se.get("volume_db")})
+        for ln in sc["lines"]:          # 台詞の効果音は台詞の頭から
+            for se in ln.get("se") or []:
+                plan.se.append({"file": se["file"], "t": ln["_start"] + float(se.get("at", 0.0)),
+                                "volume_db": se.get("volume_db")})
     starts = {sc["id"]: s0 for sc, s0, _ in scene_bounds}
     ends = {sc["id"]: s1 for sc, _, s1 in scene_bounds}
     for bg in ep.get("bgm") or []:
@@ -303,6 +315,39 @@ def build_plan(ep: dict, style: dict, narrator, w: int, h: int, fps: float) -> P
                          "volume_db": bg.get("volume_db")})
     plan.speeds = speeds
     return plan
+
+
+def _plan_characters(ep: dict, plan: Plan, scene_bounds: list) -> None:
+    """立ち絵を出す区間(場面ごと)と、表情を切り替える時刻をタイムラインに入れる。
+
+    出演キャラは 場面の cast → 台本全体の cast → その場面で話すキャラ の順に決める。
+    最初の場面は動画の頭から、最後の場面は動画の終わりまで出す(途中で現れたり消えたりしないように)。
+    """
+    chars = ep.get("characters") or {}
+    plan.characters = chars
+    if not chars:
+        return
+    end_all = plan.total_frames / plan.fps
+    for i, (sc, s0, s1) in enumerate(scene_bounds):
+        s0 = 0.0 if i == 0 else s0
+        s1 = end_all if i == len(scene_bounds) - 1 else s1
+        cast = sc.get("cast")
+        if cast is None:
+            cast = ep.get("cast")
+        if cast is None:
+            cast = [ln["speaker"] for ln in sc["lines"] if ln["speaker"] in chars]
+        for name in dict.fromkeys(cast):
+            if name in chars:
+                plan.cast.append({"name": name, "start": round(s0, 3), "end": round(s1, 3)})
+    for sc in ep["scenes"]:
+        for ln in sc["lines"]:
+            t0 = round(float(ln.get("_start", 0.0)), 3)
+            if ln.get("face") and ln["speaker"] in chars:
+                plan.faces.append({"t": t0, "name": ln["speaker"], "face": str(ln["face"])})
+            for name, face in (ln.get("faces") or {}).items():
+                if name in chars:
+                    plan.faces.append({"t": t0, "name": name, "face": str(face)})
+    plan.faces.sort(key=lambda e: e["t"])
 
 
 def _find_line(ep: dict, clip: LineClip):

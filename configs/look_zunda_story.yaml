@@ -1,0 +1,36 @@
+# 「ずんだもん系の物語動画」の見た目の共通設定（look）。docs/09
+# かんたん台本の先頭に「look: configs/look_zunda_story.yaml」と書くと、どの台本でもこの見た目になる。
+# 数値は仮。PCでの分析結果（configs/style_spec_zunda_matsuro.md）に合わせてここを直せば、全部の台本に効く。
+
+# 目標スタイル（素材の長さ・つなぎ方・話速・音量）。分析で作ったら行頭の # を消す
+# style: configs/style_zunda_matsuro.yaml
+
+default_speaker: ナレーター          # かんたん台本で話者名の無い行を読む声
+voices:                              # VOICEVOXの話者IDは `vlab voices` で確認して合わせる
+  ナレーター: {engine: voicevox, speaker: 11, speed: auto}   # 玄野武宏(ノーマル)
+  ずんだもん: {engine: voicevox, speaker: 3, speed: auto}    # ずんだもん(ノーマル)
+
+characters:                          # 立ち絵。<表情>.png / _open / _half / _blink を置く（docs/09）
+  ずんだもん:
+    dir: assets/chars/zundamon       # 利用規約に沿って配布されている立ち絵素材を置く
+    default: normal
+    x: 0.82                          # 立ち絵の中心の横位置（画面比）
+    height: 0.74                     # 立ち絵の高さ（画面の高さ比）
+    bottom: 1.04                     # 立ち絵の下端（1より大きいと少し下にはみ出す）
+cast: [ずんだもん]                   # 立ち絵を出すキャラの既定（場面の [出演: …] で変えられる）
+
+default_visual: {type: color, color: "#1f242c", color2: "#3a4352"}   # 背景の指定が無い場面
+
+telop:
+  size: 0.058
+  y: 0.88
+  max_chars: 26
+  outline_width: 0.16
+  speaker_styles:                    # 話者ごとの字幕の色（文字色・縁取り）
+    ナレーター: {color: "#ffffff", outline: "#1d1d1d"}
+    ずんだもん: {color: "#ffffff", outline: "#2f8f3a"}
+title_style: {size: 0.10, y: 0.45, duration: 2.2}          # 場面タイトル（[タイトル: 3日後…]）
+callout_style: {size: 0.12, color: "#ffef5a", outline: "#2b2b2b", y: 0.32}   # [強調: …]
+
+credits:
+  - "立ち絵: （使った立ち絵素材の配布者名をここに書く）"

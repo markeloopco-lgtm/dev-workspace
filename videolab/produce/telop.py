@@ -111,9 +111,10 @@ class TextRenderer:
         self.font_path = font_path
         self._cache = {}
 
-    def render(self, text: str, color: str = None, alpha: float = 1.0):
-        st = self.style
-        key = (text, color)
+    def render(self, text: str, color: str = None, alpha: float = 1.0, override: dict = None):
+        """override は話者ごとの見た目(color / outline / outline_width / band など)の上書き。"""
+        st = {**self.style, **override} if override else self.style
+        key = (text, color, tuple(sorted((override or {}).items())))
         if key not in self._cache:
             # 文字の大きさは min(幅, 高さ) 基準(縦動画でも大きくなりすぎない)。
             # 2行に折り返しても画面に収まらなければ、収まるまで少しずつ小さくする

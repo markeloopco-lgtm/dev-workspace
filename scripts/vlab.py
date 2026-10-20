@@ -11,6 +11,7 @@
   python scripts/vlab.py aggregate analysis/A analysis/B analysis/C -o configs/style_profile.yaml
   python scripts/vlab.py produce episodes/sample_moon_half.yaml --check
   python scripts/vlab.py stock episodes/xxx.yaml         # 台本の {type: stock} 素材を取得(docs/08)
+  python scripts/vlab.py make 台本.txt --draft            # かんたん台本 → 変換 → 素材取得 → 動画(docs/09)
 """
 
 import argparse
@@ -133,16 +134,18 @@ def cmd_voices(a):
 
 
 def cmd_new_episode(a):
-    tpl = Path(__file__).resolve().parent.parent / "episodes" / "_template.yaml"
-    # タイトルに " や \ があってもYAMLが壊れないようエスケープする
-    text = tpl.read_text(encoding="utf-8").replace(
-        "{{TITLE}}", json.dumps(a.title, ensure_ascii=False)[1:-1])
     out = Path(a.out)
+    story = out.suffix.lower() == ".txt"     # .txt ならかんたん台本(docs/09)の雛形
+    tpl = Path(__file__).resolve().parent.parent / "episodes" / ("_template_story.txt" if story else "_template.yaml")
+    # YAMLはタイトルに " や \ があっても壊れないようエスケープする
+    title = a.title.replace("\n", " ") if story else json.dumps(a.title, ensure_ascii=False)[1:-1]
+    text = tpl.read_text(encoding="utf-8").replace("{{TITLE}}", title)
     if out.exists() and not a.force:
         sys.exit(f"既にあります: {out} (上書きするなら --force)")
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(text, encoding="utf-8")
-    print(f"作成しました: {out}\n次: 台本を書いたら python scripts/vlab.py produce {out} --draft")
+    nxt = "make" if story else "produce"
+    print(f"作成しました: {out}\n次: 台本を書いたら python scripts/vlab.py {nxt} {out} --draft")
 
 
 def cmd_produce(a):
@@ -175,6 +178,34 @@ def cmd_stock(a):
     if got:
         print(f"素材をそろえました({stock.STOCK_DIR}): " + " / ".join(f"{q} {n}本" for q, n in got.items()))
         print(f"次: python scripts/vlab.py produce {a.target} --draft")
+
+
+def cmd_script(a):
+    from videolab.produce.script_text import convert
+    out = convert(a.script, a.out, a.look)
+    print(f"台本YAMLを書き出しました: {out}\n次: python scripts/vlab.py produce {out} --draft")
+    return 0
+
+
+def cmd_make(a):
+    """かんたん台本 → 台本YAML → (フリー素材の取得) → 動画、を1回で。"""
+    from videolab import stock
+    from videolab.produce.script_text import convert
+    import yaml
+    ep_path = convert(a.script, a.out_episode, a.look)
+    print(f"[台本] {ep_path}")
+    raw = yaml.safe_load(ep_path.read_text(encoding="utf-8")) or {}
+    if stock.stock_requests(raw):
+        stock._load_keys()
+        if any(stock._key(p) for p in stock.PROVIDERS):
+            print("[素材] フリー素材を取得します")
+            stock.fetch_for_episode(ep_path)
+        elif not a.draft:
+            print("エラー: 台本に [素材: …] がありますが、Pexels/Pixabay のAPIキーがありません"
+                  "(docs/08)。--draft なら仮カードで進めます", file=sys.stderr)
+            return 1
+    a.episode = str(ep_path)
+    return cmd_produce(a)
 
 
 def main(argv=None):
@@ -260,9 +291,9 @@ def main(argv=None):
     s.add_argument("--url")
     s.set_defaults(func=cmd_voices)
 
-    s = sub.add_parser("new-episode", help="台本の雛形を作る")
+    s = sub.add_parser("new-episode", help="台本の雛形を作る(-o が .txt ならかんたん台本)")
     s.add_argument("title")
-    s.add_argument("-o", "--out", required=True)
+    s.add_argument("-o", "--out", required=True, help="xxx.yaml(台本YAML) か xxx.txt(かんたん台本。docs/09)")
     s.add_argument("--force", action="store_true")
     s.set_defaults(func=cmd_new_episode)
 
@@ -279,6 +310,26 @@ def main(argv=None):
     s.add_argument("--draft", action="store_true", help="半分の解像度で速く試す")
     s.add_argument("--check", action="store_true", help="完成後に解析して目標スタイルと比較")
     s.set_defaults(func=cmd_produce)
+
+    s = sub.add_parser("script", help="かんたん台本(ふつうの文章)を台本YAMLに変換する")
+    s.add_argument("script", help="かんたん台本(.txt)")
+    s.add_argument("-o", "--out", help="出力YAML(既定 episodes/<台本名>.yaml)")
+    s.add_argument("--look", help="見た目の共通設定(台本の look: より優先)")
+    s.set_defaults(func=cmd_script)
+
+    s = sub.add_parser("make", help="かんたん台本から動画まで一気に作る(変換→素材取得→制作)")
+    s.add_argument("script", help="かんたん台本(.txt)")
+    s.add_argument("--look", help="見た目の共通設定(台本の look: より優先)")
+    s.add_argument("--out-episode", help="変換した台本YAMLの保存先(既定 episodes/<台本名>.yaml)")
+    s.add_argument("--style", help="目標スタイル(既定は look/台本の style か configs/style_profile.yaml)")
+    s.add_argument("--out", help="出力mp4")
+    s.add_argument("--tts", choices=["voicevox", "aivis", "sbv2", "dummy"],
+                   help="全話者のTTSエンジンを一時的に切り替える(dummy=音声エンジン無しで試す)")
+    s.add_argument("--engine", default="auto", choices=["auto", "2d", "blender"])
+    s.add_argument("--encoder", default="x264", choices=["x264", "nvenc"])
+    s.add_argument("--draft", action="store_true", help="半分の解像度で速く試す(未配置の素材は仮カード)")
+    s.add_argument("--check", action="store_true", help="完成後に解析して目標スタイルと比較")
+    s.set_defaults(func=cmd_make)
 
     s = sub.add_parser("stock", help="フリー動画素材(Pexels/Pixabay)を台本の検索語で取得")
     s.add_argument("target", help="台本YAML(--search のときは検索語)")

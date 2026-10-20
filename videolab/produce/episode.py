@@ -14,11 +14,11 @@ class EpisodeError(ValueError):
 
 
 def _resolve(path_str: str, base: Path) -> Path:
-    """台本のあるフォルダ → 作業フォルダ の順に探し、実体のパス(リンクを辿った先)を返す。"""
+    """台本のあるフォルダ → 作業フォルダ → リポジトリ直下 の順に探し、実体のパス(リンクを辿った先)を返す。"""
     p = Path(path_str)
     if p.is_absolute():
         return p.resolve()
-    for root in (base, Path.cwd()):
+    for root in (base, Path.cwd(), _REPO):
         cand = root / p
         if cand.exists():
             return cand.resolve()
@@ -55,6 +55,146 @@ def _file(path_str: str, base: Path, where: str) -> str:
     return str(p)
 
 
+def _norm_se(items, base: Path, where: str, ep: dict, allow_missing: bool) -> list:
+    """効果音(文字列 / {file, at, volume_db} / そのリスト)をそろえる。下書きでは未配置の音を飛ばして進む。"""
+    if not items:
+        return []
+    if isinstance(items, (str, dict)):
+        items = [items]
+    out = []
+    for i, se in enumerate(items):
+        se = {"file": se} if isinstance(se, str) else dict(se or {})
+        if not se.get("file"):
+            raise EpisodeError(f"{where}[{i}] に file がありません")
+        p = _resolve(str(se["file"]), base)
+        _guard(p, f"{where}[{i}]", base)
+        if not p.exists():
+            if not allow_missing:
+                raise EpisodeError(f"{where}[{i}]: ファイルがありません: {p}")
+            ep["_missing"].append(str(p))
+            continue
+        se["file"] = str(p)
+        se["at"] = float(se.get("at", 0.0))
+        out.append(se)
+    return out
+
+
+def _deep_merge(base: dict, over: dict) -> dict:
+    out = dict(base)
+    for k, v in over.items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = _deep_merge(out[k], v)
+        else:
+            out[k] = v
+    return out
+
+
+def _apply_look(ep: dict, base: Path) -> dict:
+    """look: に書いた「見た目の共通設定」(声・立ち絵・字幕・タイトル・BGMなど)を下敷きにする。
+
+    台本に同じ項目があれば台本が優先(辞書は項目ごとに上書き)。credits は両方を足す。
+    チャンネルの作風を1つのファイルにまとめ、台本は中身(scenes)に集中するため。
+    """
+    if not ep.get("look"):
+        return ep
+    lp = _resolve(str(ep["look"]), base)
+    _guard(lp, "look", base)
+    if not lp.exists():
+        raise EpisodeError(f"look のファイルがありません: {lp}")
+    try:
+        look = yaml.safe_load(lp.read_text(encoding="utf-8-sig")) or {}
+    except yaml.YAMLError as e:
+        raise EpisodeError(f"look のYAMLの書き方に誤りがあります: {lp}\n{e}") from e
+    if not isinstance(look, dict):
+        raise EpisodeError(f"look は「項目: 値」の形で書きます: {lp}")
+    look.pop("scenes", None)
+    own = {k: v for k, v in ep.items() if k != "look"}
+    merged = _deep_merge(look, own)
+    credits = list(look.get("credits") or []) + [c for c in (own.get("credits") or [])
+                                                  if c not in (look.get("credits") or [])]
+    if credits:
+        merged["credits"] = credits
+    merged["_look"] = str(lp)
+    return merged
+
+
+def _norm_characters(ep: dict, base: Path, allow_missing: bool) -> None:
+    """characters(立ち絵)を読み、表情ごとの画像を集めて ep["characters"] に入れ直す。"""
+    from .characters import DEFAULT_LAYOUT, VARIANTS, resolve_face, scan_face_dir
+    raw = ep.get("characters") or {}
+    if not isinstance(raw, dict):
+        raise EpisodeError("characters は「名前: 設定」の形で書きます(episodes/README.md)")
+    out, skipped = {}, []
+    for name, c in raw.items():
+        c = dict(c or {})
+        where = f"characters.{name}"
+        faces = {}
+        if c.get("dir"):
+            d = _resolve(str(c["dir"]), base)
+            _guard(d, where, base)
+            if d.is_dir():
+                faces = scan_face_dir(d)
+            elif not allow_missing:
+                raise EpisodeError(
+                    f"{where}: 立ち絵のフォルダがありません: {d}\n"
+                    "  利用規約に沿って配布されている立ち絵素材を置いてください(docs/09)。"
+                    "仮の立ち絵は scripts/make_placeholder_character.py で作れます(--draft なら省略して進めます)")
+        for fname, fv in (c.get("faces") or {}).items():
+            fv = {"base": fv} if isinstance(fv, str) else dict(fv or {})
+            faces[str(fname)] = {k: _file(p, base, f"{where}.faces.{fname}.{k}")
+                                 for k, p in fv.items() if k in ("base",) + VARIANTS}
+        faces = {k: v for k, v in faces.items() if "base" in v}
+        if not faces:
+            if not allow_missing:
+                raise EpisodeError(f"{where}: 立ち絵の画像がありません(<表情>.png を置くか faces: で指定。docs/09)")
+            ep["_missing"].append(f"立ち絵: {name}")
+            skipped.append(name)
+            continue
+        want = str(c.get("default") or ("normal" if "normal" in faces else sorted(faces)[0]))
+        default = resolve_face(want, faces)
+        if default is None:
+            raise EpisodeError(f"{where}.default: 表情 '{want}' がありません(ある表情: {', '.join(sorted(faces))})")
+        layout = {**DEFAULT_LAYOUT, **{k: c[k] for k in DEFAULT_LAYOUT if k in c}}
+        out[name] = {"name": name, "faces": faces, "default": default, **layout}
+    ep["characters"] = out
+    ep["_skipped_characters"] = skipped
+    if ep.get("cast") is not None:
+        ep["cast"] = _check_cast(ep["cast"], out, set(skipped), "cast")
+
+
+def _check_cast(cast, chars: dict, skipped: set, where: str) -> list:
+    cast = cast if isinstance(cast, list) else [cast]
+    bad = [str(c) for c in cast if c not in chars and c not in skipped]
+    if bad:
+        raise EpisodeError(f"{where}: characters に無い名前があります: {', '.join(bad)}"
+                           f"（定義済み: {', '.join(chars) or 'なし'}）")
+    return [c for c in cast if c in chars]
+
+
+def _check_faces(ln: dict, chars: dict, skipped: set, where: str) -> None:
+    """台詞の face(話者の表情) / faces(他のキャラの表情) が実在する表情か確かめ、日本語の別名
+    (笑顔 → happy など)をファイルの表情の名前に直す。"""
+    from .characters import resolve_face
+
+    def fix(name, face):
+        if name in skipped:
+            return str(face)
+        if name not in chars:
+            raise EpisodeError(f"{where}: 表情を変えるキャラ '{name}' が characters にありません")
+        got = resolve_face(face, chars[name]["faces"])
+        if got is None:
+            raise EpisodeError(f"{where}: '{name}' に表情 '{face}' がありません"
+                               f"（ある表情: {', '.join(sorted(chars[name]['faces']))}）")
+        return got
+
+    if ln.get("face"):
+        ln["face"] = fix(ln["speaker"], ln["face"])
+    if ln.get("faces"):
+        if not isinstance(ln["faces"], dict):
+            raise EpisodeError(f"{where}: faces は {{キャラ名: 表情}} の形で書きます")
+        ln["faces"] = {name: fix(name, face) for name, face in ln["faces"].items()}
+
+
 def load_episode(path, allow_missing: bool = False) -> dict:
     """台本を読み、パスを解決・検査する。
 
@@ -71,6 +211,7 @@ def load_episode(path, allow_missing: bool = False) -> dict:
     if not isinstance(ep, dict) or not ep.get("scenes"):
         raise EpisodeError(f"scenes がありません: {path}")
     base = path.parent
+    ep = _apply_look(ep, base)
     ep.setdefault("title", path.stem)
     ep["voices"] = ep.get("voices") or {}
     ep["_path"] = str(path)
@@ -79,14 +220,21 @@ def load_episode(path, allow_missing: bool = False) -> dict:
     for key in ("output", "style"):
         if ep.get(key):
             ep[key] = str(_resolve(ep[key], base))
-    bgms = ep.get("bgm") or []
-    for i, bg in enumerate(bgms):
-        if isinstance(bg, str):
-            bgms[i] = bg = {"file": bg}
+    bgms = []
+    for i, bg in enumerate(ep.get("bgm") or []):
+        bg = {"file": bg} if isinstance(bg, str) else dict(bg or {})
         if "file" not in bg:
             raise EpisodeError(f"bgm[{i}] に file がありません")
+        p = _resolve(str(bg["file"]), base)
+        if allow_missing and not p.exists():
+            ep["_missing"].append(str(p))      # 下書きはBGM無しで進む
+            continue
         bg["file"] = _file(bg["file"], base, f"bgm[{i}]")
+        bgms.append(bg)
     ep["bgm"] = bgms
+    _norm_characters(ep, base, allow_missing)
+    chars = ep["characters"]
+    skipped = set(ep.get("_skipped_characters", []))
     voices = ep["voices"]
     ids = set()
     for si, sc in enumerate(ep["scenes"]):
@@ -113,22 +261,24 @@ def load_episode(path, allow_missing: bool = False) -> dict:
             if ln.get("visual"):
                 ln["visual"] = _norm_visual(ln["visual"], base, f"{sc['id']}.lines[{li}].visual",
                                             ep, allow_missing)
+            _check_faces(ln, chars, skipped, f"{sc['id']}.lines[{li}]")
+            if ln.get("se"):    # 台詞の頭で鳴らす効果音(at は台詞の頭からの秒数)
+                ln["se"] = _norm_se(ln["se"], base, f"{sc['id']}.lines[{li}].se", ep, allow_missing)
             norm.append(ln)
         sc["lines"] = norm
+        if sc.get("cast") is not None:
+            sc["cast"] = _check_cast(sc["cast"], chars, skipped, f"{sc['id']}.cast")
         vis = sc.get("visuals") or ([sc["visual"]] if sc.get("visual") else [])
         sc["visuals"] = [_norm_visual(v, base, f"{sc['id']}.visuals[{vi}]", ep, allow_missing)
                          for vi, v in enumerate(vis)]
         if not sc["visuals"] and not any(ln.get("visual") for ln in norm):
-            sc["visuals"] = [{"type": "space", "template": "starfield", "params": {}}]
+            # 映像の指定が無い場面: look/台本の default_visual(例: 物語動画の背景)、無ければ星空
+            dv = ep.get("default_visual")
+            sc["visuals"] = ([_norm_visual(dv, base, f"{sc['id']}.default_visual", ep, allow_missing)] if dv
+                             else [{"type": "space", "template": "starfield", "params": {}}])
         if not norm and not sc.get("duration"):
             raise EpisodeError(f"{sc['id']}: lines も duration も無いシーンは作れません")
-        ses = sc.get("se") or []
-        for ei, se in enumerate(ses):
-            if isinstance(se, str):
-                ses[ei] = se = {"file": se}
-            se["file"] = _file(se["file"], base, f"{sc['id']}.se[{ei}]")
-            se["at"] = float(se.get("at", 0.0))
-        sc["se"] = ses
+        sc["se"] = _norm_se(sc.get("se"), base, f"{sc['id']}.se", ep, allow_missing)
     return ep
 
 

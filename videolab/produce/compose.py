@@ -86,13 +86,19 @@ def render_video(plan, audio_wav: Path, out_path: Path, engine: str = "auto",
     live = {}
     t0 = time.time()
     telops = sorted(plan.telops, key=lambda e: e["start"])
+    stage = None
+    if getattr(plan, "characters", None):
+        from .characters import CharacterStage
+        stage = CharacterStage(plan, w, h, fps)
     try:
         for f in range(plan.total_frames):
             tsec = f / fps
             frame = _compose_frame(f, shots, live, w, h, fps, engine, cache_dir)
+            if stage is not None:
+                stage.draw(frame, f, _fade_level(f, shots))
             for ev in telops:
                 if ev["start"] <= tsec < ev["end"]:
-                    arr, x, y = telop.render(ev["text"], ev.get("color"))
+                    arr, x, y = telop.render(ev["text"], ev.get("color"), override=ev.get("style"))
                     blend(frame, arr, x, y)
                 elif ev["start"] > tsec:
                     break
@@ -183,6 +189,21 @@ def _compose_frame(f, shots, live, w, h, fps, engine, cache_dir):
     return img.copy()   # テロップを上書きするので必ず複製(ソース側のキャッシュを汚さない)
 
 
+def _fade_level(f, shots) -> float:
+    """暗転(fade_black)の明るさ(0〜1)。_compose_frame と同じ計算で、立ち絵も一緒に暗くするため。"""
+    cur = next((s for s in shots if s.start <= f < s.end), shots[-1])
+    nxt = shots[cur.index + 1] if cur.index + 1 < len(shots) else None
+    if nxt is not None and nxt.trans_in == "fade_black":
+        half = nxt.trans_len // 2
+        if f >= nxt.start - half:
+            return max(0.0, (nxt.start - f) / max(1, half) - 1 / max(1, half))
+    if cur.trans_in == "fade_black":
+        half = cur.trans_len - cur.trans_len // 2
+        if f < cur.start + half:
+            return min(1.0, (f - cur.start + 1) / max(1, half))
+    return 1.0
+
+
 def _mix2(a, b, f, boundary_shot, live, w, h, fps, engine, cache_dir):
     B = boundary_shot.start
     lo = B - boundary_shot.pad_in
@@ -205,6 +226,9 @@ def produce_episode(episode_path, style_path=None, out_path=None, tts: str = Non
     for m in ep.get("_missing", []):
         say(f"      素材TODO(未配置・仮カードで代用): {m}")
     style_path = style_path or ep.get("style") or "configs/style_profile.yaml"
+    repo_style = Path(__file__).resolve().parents[2] / style_path
+    if not Path(style_path).is_absolute() and not Path(style_path).exists() and repo_style.exists():
+        style_path = repo_style     # 作業フォルダがリポジトリ直下でなくても既定のスタイルを使えるように
     style = load_profile(style_path)
     fmt = style.get("format", {})
     # 出力解像度は台本の resolution > 1920x1080。参考動画の解析解像度(取得は720p上限)は使わない
@@ -256,6 +280,9 @@ def produce_episode(episode_path, style_path=None, out_path=None, tts: str = Non
                    "transition_in": s.trans_in, "transition_len": round(s.trans_len / fps, 3)}
                   for s in plan.shots],
         "telops": plan.telops, "callouts": plan.callouts,
+        "characters": {n: {"default": c["default"], "faces": sorted(c["faces"])}
+                       for n, c in (plan.characters or {}).items()},
+        "cast": plan.cast, "faces": plan.faces,
     }, ensure_ascii=False, indent=1), encoding="utf-8")
     wav.unlink(missing_ok=True)
     say(f"完成: {out_path}")
