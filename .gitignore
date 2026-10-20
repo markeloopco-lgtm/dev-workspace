@@ -9,3 +9,7 @@ output/*
 # 動画スタイル解析: 解析結果（元動画・フレーム画像を含む）と自動取得モデルはコミットしない
 analysis/
 video_style/models/
+# 動画編集: 元動画・プロキシ・書き出し結果（大容量）はコミットしない
+work/
+video_edit/projects/*/.render/
+video_edit/projects/*/*.mp4
