@@ -25,7 +25,8 @@ python video_edit\auto_edit.py "D:\動画\元動画.mp4" --title "タイトル1�
 | オプション | 意味 |
 |---|---|
 | `--title` | 画面上部にずっと出すタイトル（縦型ではお手本と同じ上部中央の帯） |
-| `--prompt` | 文字起こしのヒント（人名・専門用語。認識精度が上がる） |
+| `--prompt` | 文字起こしのヒント（人名・専門用語。認識精度が上がる。Whisperのみ） |
+| `--engine ja` | 日本語専用の文字起こし（ReazonSpeech）を使う。速い（74秒の音声が約3秒）。要モデル、下記 |
 | `--no-fx` | キラキラ等の演出を乗せない |
 | `--from-analysis analysis/<名前>` | お手本を `video_style` で解析した結果から、演出の頻度を真似る |
 | `--preview` | 確認用の軽い動画だけ作る |
@@ -105,6 +106,7 @@ python -m venv .venv                  # 初回だけ
 | `auto_edit.py` | 全工程を自動で通す（終わった工程は飛ばすので再開できる）。`自動編集.bat` から呼ばれる |
 | `../自動編集.bat` | Windows用の起動ファイル。動画をドラッグ＆ドロップ（ダブルクリックならファイル選択） |
 | `prepare.py` / `transcribe.py` / `build_edit.py` / `render.py` | 上の流れの各工程 |
+| `transcribe_ja.py` | 日本語専用の文字起こし（sherpa-onnx + ReazonSpeech）。`transcribe.py` と同じ形式で出力する。Whisper のモデル置き場(Hugging Face)に届かない環境用。`pip install sherpa-onnx` と、GitHub の k2-fsa/sherpa-onnx の asr-models リリースから `sherpa-onnx-zipformer-ja-reazonspeech-2024-08-01` と `silero_vad.onnx` を `work/asr_models/` に置く |
 | `make_assets.py` | キラキラ（ピンク系パーティクル）と白発光の透過素材を計算で生成 |
 | `make_fx_plan.py` | 演出の配置を決めて `effects.json` を書く。`--from-analysis` で `video_style/` の解析結果から出現密度を引き継げる |
 | `projects/<名前>/` | 編集プラン・文字起こし・カット位置・テロップ・演出の配置（コミットする） |

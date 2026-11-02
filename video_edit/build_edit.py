@@ -101,9 +101,19 @@ def load_sentences(tr: dict, max_len=45):
         if tk["t"][-1:] in PUNCT_END or gap > 0.7 or tk.get("seg_end") or (text_len >= max_len and tk["t"][-1:] in "、,"):
             flush()
     flush()
+    # 1文字だけの文（語尾の「て」「い」だけ時刻が少し離れて認識されたもの）は直前の文にまとめる。
+    # 言葉の時刻はそのままなので、音声は実際に話した位置で残る
+    merged = []
     for s in sents:
+        body = re.sub(r"[、。！？!?,.\s]", "", "".join(t["t"] for t in s["tokens"]))
+        if merged and len(body) <= 1 and s["tokens"][0]["s"] - merged[-1]["tokens"][-1]["e"] < 3.0:
+            merged[-1]["tokens"] += s["tokens"]
+        else:
+            merged.append(s)
+    for i, s in enumerate(merged):
+        s["id"] = i + 1
         s["text"] = "".join(t["t"] for t in s["tokens"])
-    return sents
+    return merged
 
 
 def char_token_index(sent):
@@ -592,11 +602,13 @@ def write_ass(path: Path, events, st, vertical=False):
         # 縦型ショートの配置: 字幕は画面の7割あたり（下端はアプリのUIに隠れるので避ける）、
         # 見出しは画面上部の中央に白文字＋縁取りで出しっぱなしのタイトル帯にする
         pw, ph = 1080, 1920
-        styles = f"""Style: Main,{font_main},72,&H00FFFFFF,&H000000FF,{edge},&H64000000,0,0,0,0,100,100,1,0,1,7,2,2,50,50,500,1
-Style: Heading,{font_bold},54,&H00FFFFFF,&H000000FF,{edge},&H64000000,0,0,0,0,100,100,2,0,1,6,0,8,40,40,110,1
-Style: Card,{font_bold},88,&H00FFFFFF,&H000000FF,{acc},&H64000000,0,0,0,0,100,100,2,0,1,9,3,5,60,60,0,1
-Style: Impact,{font_bold},104,{emc},&H000000FF,{edge},&H64000000,0,0,0,0,100,100,2,0,1,10,3,5,60,60,0,1
-Style: Title,{font_bold},96,&H00FFFFFF,&H000000FF,{acc},&H64000000,0,0,0,0,100,100,2,0,1,10,3,5,60,60,0,1"""
+        # ASS の文字サイズは「上の余白〜下の余白」の高さ。このフォントは余白が大きく、実際の字は指定の約7割に
+        # なるので大きめに指定する（字幕 100 → 字の高さ約70px。1行12文字で横幅に収まる）
+        styles = f"""Style: Main,{font_main},100,&H00FFFFFF,&H000000FF,{edge},&H64000000,0,0,0,0,100,100,1,0,1,9,2,2,40,40,500,1
+Style: Heading,{font_bold},72,&H00FFFFFF,&H000000FF,{edge},&H64000000,0,0,0,0,100,100,2,0,1,7,0,8,30,30,100,1
+Style: Card,{font_bold},120,&H00FFFFFF,&H000000FF,{acc},&H64000000,0,0,0,0,100,100,2,0,1,11,3,5,50,50,0,1
+Style: Impact,{font_bold},140,{emc},&H000000FF,{edge},&H64000000,0,0,0,0,100,100,2,0,1,12,3,5,50,50,0,1
+Style: Title,{font_bold},130,&H00FFFFFF,&H000000FF,{acc},&H64000000,0,0,0,0,100,100,2,0,1,12,3,5,50,50,0,1"""
     else:
         pw, ph = 1920, 1080
         styles = f"""Style: Main,{font_main},76,&H00FFFFFF,&H000000FF,{edge},&H64000000,0,0,0,0,100,100,1,0,1,7,2,2,60,60,56,1

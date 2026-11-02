@@ -187,10 +187,15 @@ def run_pipeline(args) -> Path:
     # 2. 文字起こし
     tr = proj / "transcript.json"
     if args.redo or not tr.exists():
-        say(f"[2/6] 文字起こし中…（{tc(load_json(sj)['duration'])} の動画。CPUで動画の長さと同じくらいかかります）")
-        import transcribe
-        transcribe.main(["--name", name, "--model", args.model]
-                        + (["--prompt", args.prompt] if args.prompt else []))
+        if args.engine == "ja":
+            say("[2/6] 文字起こし中…（日本語専用エンジン ReazonSpeech。数秒〜数十秒）")
+            import transcribe_ja
+            transcribe_ja.main(["--name", name])
+        else:
+            say(f"[2/6] 文字起こし中…（{tc(load_json(sj)['duration'])} の動画。CPUで動画の長さと同じくらいかかります）")
+            import transcribe
+            transcribe.main(["--name", name, "--model", args.model]
+                            + (["--prompt", args.prompt] if args.prompt else []))
     else:
         say("[2/6] 文字起こし: 済んでいるので飛ばします")
 
@@ -262,6 +267,8 @@ def main(argv=None):
     ap.add_argument("--title", help="画面上部にずっと出すタイトル。「／」で2行")
     ap.add_argument("--prompt", default="", help="文字起こしのヒント（固有名詞・専門用語など）")
     ap.add_argument("--model", default="large-v3-turbo", help="Whisperのモデル")
+    ap.add_argument("--engine", choices=["whisper", "ja"], default="whisper",
+                    help="文字起こしエンジン。ja = 日本語専用の ReazonSpeech（transcribe_ja.py。速い）")
     ap.add_argument("--no-fx", action="store_true", help="キラキラ等の演出を乗せない")
     ap.add_argument("--from-analysis", type=Path, help="お手本の video_style 解析フォルダ（演出の頻度を真似る）")
     ap.add_argument("--preview", action="store_true", help="確認用の軽い動画だけ作る")
