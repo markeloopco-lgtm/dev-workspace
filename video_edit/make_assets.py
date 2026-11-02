@@ -106,14 +106,14 @@ def glow(size: int, n_frames: int, fps: float) -> list[np.ndarray]:
     return out
 
 
-def main() -> None:
+def main(argv=None) -> None:
     ap = argparse.ArgumentParser(description="透過エフェクト素材を生成する")
     ap.add_argument("-o", "--outdir", type=Path, default=Path("assets"))
     ap.add_argument("--fps", type=float, default=29.97)
     ap.add_argument("--sparkle-sec", type=float, default=1.6)
     ap.add_argument("--glow-sec", type=float, default=0.35)
     ap.add_argument("--size", type=int, default=512)
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     args.outdir.mkdir(parents=True, exist_ok=True)
     ns = max(6, int(round(args.sparkle_sec * args.fps)))

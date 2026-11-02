@@ -13,3 +13,4 @@ video_style/models/
 work/
 video_edit/projects/*/.render/
 video_edit/projects/*/*.mp4
+video_edit/projects/*/assets/

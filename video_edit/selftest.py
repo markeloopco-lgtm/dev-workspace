@@ -13,6 +13,7 @@ usage: python video_edit/selftest.py
 """
 
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -46,7 +47,8 @@ def check(name, cond, detail=""):
         FAIL.append(name)
 
 
-def make_source(path: Path, hdr=False, dur=DUR):
+def make_source(path: Path, hdr=False, dur=DUR, size=None):
+    w, h = size or (W, H)
     sr = 48000
     t = np.arange(int(dur * sr)) / sr
     x = np.random.default_rng(1).normal(0, 0.0003, len(t))
@@ -64,14 +66,14 @@ def make_source(path: Path, hdr=False, dur=DUR):
         wf.setframerate(sr)
         wf.writeframes((np.clip(x, -1, 1) * 32767).astype("<i2").tobytes())
     color = ["-color_primaries", "bt2020", "-color_trc", "arib-std-b67", "-colorspace", "bt2020nc"] if hdr else []
-    p = subprocess.Popen(["ffmpeg", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "gray", "-s", f"{W}x{H}",
+    p = subprocess.Popen(["ffmpeg", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "gray", "-s", f"{w}x{h}",
                           "-r", str(FPS), "-i", "-", "-i", str(wav), "-c:v", "libx264", "-crf", "18",
                           "-preset", "veryfast", "-pix_fmt", "yuv420p", *color, "-c:a", "aac", "-b:a", "192k",
                           "-shortest", str(path)], stdin=subprocess.PIPE)
     marks = {int(round(m * FPS)) for m in MARKS if m < dur - 0.1}
     for n in range(int(dur * FPS)):
-        f = np.full((H, W), 60, np.uint8)
-        x0 = 100 + (n * 7) % (W - 300)
+        f = np.full((h, w), 60, np.uint8)
+        x0 = 100 + (n * 7) % (w - 300)
         f[250:450, x0:x0 + 200] = 120
         if n in marks:
             f[:] = 255
@@ -206,6 +208,53 @@ def main():
                   f"{pinfo['color_transfer']} {pinfo['width']}x{pinfo['height']}")
         except Exception as e:  # noqa: BLE001
             check("HDR→SDR変換したプロキシ", False, str(e)[:200])
+
+        print("\n縦型・全自動（auto_edit.py）:")
+        import auto_edit  # noqa: E402
+        import make_fx_plan  # noqa: E402
+        make_fx_plan.PROJECTS_DIR = td / "projects"
+        vsrc = td / "vertical.mp4"
+        make_source(vsrc, size=(720, 1280))
+        vname = auto_edit.project_name(vsrc)
+        vproj = td / "projects" / vname
+        vproj.mkdir(parents=True, exist_ok=True)
+        vedit_common.save_json(vproj / "transcript.json", fake_transcript())  # 文字起こしは済んでいる扱い
+        vout = td / "vertical_out.mp4"
+        auto_edit.main([str(vsrc), "--no-venv", "--yes", "--cpu", "--title", "縦型の検証／二行目", "-o", str(vout)])
+        vplan = (vproj / "edit_plan.md").read_text(encoding="utf-8")
+        check("言い直しを自動でカット", "~~それでははじめ~~" in vplan)
+        check("タイトルを見出しとして先頭に入れる", "### 縦型の検証／二行目" in vplan)
+        check("出しっぱなしタイトルなので登場演出は無し", "見出しの登場演出： なし" in vplan)
+        vedit = vedit_common.load_json(vproj / "edit.json")
+        check("区間数4（手直し無しで同じカットになる）", len(vedit["segments"]) == 4, str(len(vedit["segments"])))
+        vass = (vproj / "telops.ass").read_text(encoding="utf-8-sig")
+        check("字幕の座標系が縦型", "PlayResX: 1080" in vass and "PlayResY: 1920" in vass)
+        check("タイトルは「／」で2行", "縦型の検証\\N二行目" in vass)
+        pinfo = vedit_common.probe(td / "work" / vname / "proxy.mp4")
+        check("縦型のプロキシは幅540", (pinfo["width"], pinfo["height"]) == (540, 960),
+              f"{pinfo['width']}x{pinfo['height']}")
+        oinfo = vedit_common.probe(vout)
+        check("完成版は縦型 1080x1920", (oinfo["width"], oinfo["height"]) == (1080, 1920),
+              f"{oinfo['width']}x{oinfo['height']}")
+        check("完成版の長さ", abs(oinfo["duration"] - vedit["out_sec"]) < 0.1, f"{oinfo['duration']:.2f}秒")
+        fxp = vedit_common.load_json(vproj / "effects.json")
+        sp = [e for e in fxp["events"] if e["type"] == "sparkle"]
+        check("キラキラを配置", len(sp) >= 1, str([e["at"] for e in sp]))
+        if sp:
+            fr = decode_rgb_frame(vout, sp[0]["at"] + 0.5).astype(int)
+            pinkpx = ((fr[..., 0] > 180) & (fr[..., 0] - fr[..., 1] > 60) & (fr[..., 2] > 120)).mean()
+            check("キラキラが画面に出る", pinkpx > 0.001, f"{pinkpx:.4f}")
+        fr = decode_rgb_frame(vout, 1.0)
+        top = (fr[int(1920 * 0.04):int(1920 * 0.16)] > 225).all(axis=2).mean()
+        check("画面上部にタイトル（白文字）", top > 0.003, f"{top:.4f}")
+        band = (fr[int(1920 * 0.60):int(1920 * 0.80)] > 225).all(axis=2).mean()
+        check("字幕は画面の6〜8割の高さ", band > 0.003, f"{band:.4f}")
+        bottom = (fr[int(1920 * 0.85):] > 225).all(axis=2).mean()
+        check("最下部（アプリのUIで隠れる所）に字幕を置かない", bottom < 0.001, f"{bottom:.4f}")
+        try:
+            shutil.copy(vout, HERE.parent / "work" / "selftest_vertical.mp4")
+        except OSError:
+            pass
 
     print("\n結果:", "すべてOK" if not FAIL else f"NG {len(FAIL)}件: {FAIL}")
     return 1 if FAIL else 0
