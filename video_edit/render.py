@@ -91,7 +91,45 @@ def even(x):
     return int(round(x / 2)) * 2
 
 
-def video_graph(edit, info, W, H, fps_str):
+def fx_graph(groups, W, H, start_idx, cur="[v1]"):
+    """透過素材（キラキラ・白発光）を指定時刻に重ねるフィルタを組み立てる。
+
+    groups: [(素材名, [イベント, ...]), ...]。素材1つにつき入力1つを split して使い回す。
+    戻り値: (フィルタ文字列のリスト, 最後の出力ラベル)
+    """
+    parts = []
+    for k, (_name, evs) in enumerate(groups):
+        idx = start_idx + k
+        parts.append(f"[{idx}:v]format=rgba,split={len(evs)}"
+                     + "".join(f"[fx{k}s{i}]" for i in range(len(evs))))
+        for i, e in enumerate(evs):
+            size = max(2, even(W * float(e.get("size", 0.6))))
+            x = int(round(W * float(e.get("x", 0.5)) - size / 2))
+            y = int(round(H * float(e.get("y", 0.5)) - size / 2))
+            op = min(max(float(e.get("opacity", 0.9)), 0.0), 1.0)
+            parts.append(f"[fx{k}s{i}]scale={size}:{size},colorchannelmixer=aa={op:.3f},"
+                         f"setpts=PTS+{float(e['at']):.4f}/TB[fx{k}d{i}]")
+            nxt = f"[vfx{k}_{i}]"
+            parts.append(f"{cur}[fx{k}d{i}]overlay={x}:{y}:format=auto:"
+                         f"eof_action=pass:repeatlast=0{nxt}")
+            cur = nxt
+    return parts, cur
+
+
+def fx_groups(plan, out_sec):
+    """effects.json を素材ごとにまとめる。動画の尺の外に出るイベントは捨てる。"""
+    if not plan:
+        return []
+    evs = [e for e in plan.get("events", []) if 0 <= float(e.get("at", -1)) < out_sec]
+    groups = []
+    for name in plan.get("assets", {}):
+        got = [e for e in evs if e.get("type") == name]
+        if got:
+            groups.append((name, sorted(got, key=lambda e: float(e["at"]))))
+    return groups
+
+
+def video_graph(edit, info, W, H, fps_str, fx=None):
     fps = float(parse_rate(fps_str))
     eps = 0.5 / fps
     segs = edit["segments"]
@@ -115,7 +153,11 @@ def video_graph(edit, info, W, H, fps_str):
              f"[b2][z2]overlay=0:0:enable='{en}'[v1];")
     else:
         g = chain + f",scale={W}:{H}:flags=lanczos[v1];"
-    g += "[v1]ass=telops.ass:fontsdir=fonts,format=yuv420p[vout]"
+    cur = "[v1]"
+    if fx:
+        parts, cur = fx_graph(fx, W, H, 2, cur)
+        g += ";".join(parts) + ";"
+    g += f"{cur}ass=telops.ass:fontsdir=fonts,format=yuv420p[vout]"
     return g
 
 
@@ -127,6 +169,7 @@ def main(argv=None):
     ap.add_argument("--preview", action="store_true", help="確認用の軽い動画（960x540）を作る")
     ap.add_argument("-o", "--out", help="出力ファイル")
     ap.add_argument("--cpu", action="store_true", help="GPUを使わない")
+    ap.add_argument("--no-fx", action="store_true", help="キラキラ等の演出を乗せない")
     args = ap.parse_args(argv)
 
     proj = PROJECTS_DIR / args.name
@@ -153,6 +196,30 @@ def main(argv=None):
         td = Path(td)
         shutil.copy(proj / "telops.ass", td / "telops.ass")
         shutil.copytree(FONTS_DIR, td / "fonts")
+
+        # 演出（キラキラ・白発光）。effects.json が無ければ何もしない
+        fx, fx_inputs = [], []
+        fxp = proj / "effects.json"
+        if fxp.exists() and not args.no_fx:
+            plan = load_json(fxp)
+            fx = fx_groups(plan, edit["out_sec"])
+            missing = []
+            for name, _evs in fx:
+                rel = plan["assets"][name]
+                ap_ = Path(rel) if Path(rel).is_absolute() else (proj / rel)
+                if not ap_.exists():
+                    missing.append(str(ap_))
+                    continue
+                dst = td / f"fx_{name}{ap_.suffix}"
+                shutil.copy(ap_, dst)
+                fx_inputs += ["-i", dst.name]
+            if missing:
+                raise SystemExit("演出素材が見つかりません: " + ", ".join(missing)
+                                 + "\n  python video_edit/make_assets.py -o "
+                                 + str(proj / "assets") + " で生成できます")
+            if fx:
+                log(f"[演出] {sum(len(e) for _n, e in fx)}箇所に重ねます "
+                    f"({', '.join(f'{n}×{len(e)}' for n, e in fx)})")
         log("[音声] 残す区間をつないでいます…")
         wav = td / "audio.wav"
         build_audio(source, edit, wav, fps)
@@ -164,7 +231,8 @@ def main(argv=None):
                   f"measured_thresh={meas['input_thresh']}:offset={meas['target_offset']}:linear=true,aresample={SR}")
         else:
             af = f"highpass=f=70,loudnorm=I={target}:TP=-1.5:LRA=11,aresample={SR}"
-        (td / "graph.txt").write_text(video_graph(edit, info, W, H, fps_str) + f";[1:a]{af}[aout]", encoding="utf-8")
+        (td / "graph.txt").write_text(video_graph(edit, info, W, H, fps_str, fx) + f";[1:a]{af}[aout]",
+                                      encoding="utf-8")
 
         use_gpu = (not args.preview) and (not args.cpu) and nvenc_ok()
         if args.preview:
@@ -175,7 +243,7 @@ def main(argv=None):
         else:
             venc = ["-c:v", "libx264", "-preset", "medium", "-crf", "18", "-b:a", "192k"]
         dec = ["-hwaccel", "auto"] if use_gpu else []
-        cmd = (["ffmpeg", "-y"] + dec + ["-i", str(source.resolve()), "-i", "audio.wav"]
+        cmd = (["ffmpeg", "-y"] + dec + ["-i", str(source.resolve()), "-i", "audio.wav"] + fx_inputs
                + filter_script_args("graph.txt")
                + ["-map", "[vout]", "-map", "[aout]"] + venc
                + ["-c:a", "aac", "-pix_fmt", "yuv420p", "-color_primaries", "bt709", "-color_trc", "bt709",

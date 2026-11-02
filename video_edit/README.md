@@ -18,6 +18,15 @@ video_edit/projects/<名前>/edit_plan.md   ← ここを直す（Claudeが言�
 OKなら PC で render.py --source 元動画 … 完成版（1920x1080・元の画質から）
 ```
 
+キラキラ等の演出を乗せる場合は、`render.py` の前に2つ挟む。
+
+```
+make_assets.py    … キラキラ・白発光の透過素材を生成（外部素材・有料素材は不要）
+make_fx_plan.py   … カット頭のどこに置くかを決めて effects.json を書く
+```
+
+`effects.json` があると `render.py` が自動で読んで重ねる。乗せたくないときは `--no-fx`。
+
 ## 編集プランの書き方
 
 ```markdown
@@ -63,7 +72,10 @@ python -m venv .venv                  # 初回だけ
 | パス | 内容 |
 |---|---|
 | `prepare.py` / `transcribe.py` / `build_edit.py` / `render.py` | 上の流れの各工程 |
-| `projects/<名前>/` | 編集プラン・文字起こし・カット位置・テロップ（コミットする） |
+| `make_assets.py` | キラキラ（ピンク系パーティクル）と白発光の透過素材を計算で生成 |
+| `make_fx_plan.py` | 演出の配置を決めて `effects.json` を書く。`--from-analysis` で `video_style/` の解析結果から出現密度を引き継げる |
+| `projects/<名前>/` | 編集プラン・文字起こし・カット位置・テロップ・演出の配置（コミットする） |
+| `projects/<名前>/assets/` | 演出の透過素材（`make_assets.py` が生成。差し替え可） |
 | `fonts/` | テロップ用フォント M PLUS Rounded 1c（SIL OFL。`OFL.txt` 参照） |
 | `selftest.py` | 合成動画での通し検証（カット・映像と音声の同期・テロップ・HDR変換） |
 | `../work/<名前>/` | 作業用の動画・音声（大容量のためコミットしない） |
