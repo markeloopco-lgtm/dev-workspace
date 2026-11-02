@@ -1,0 +1,20 @@
+{
+ "file": "video_638870483625836652-J6nnoNjA.mp4",
+ "width": 720,
+ "height": 1280,
+ "rotation": 0,
+ "fps": 29.99303733061968,
+ "fps_str": "560000/18671",
+ "duration": 186.71,
+ "size_bytes": 48900607,
+ "vcodec": "h264",
+ "pix_fmt": "yuv420p",
+ "color_transfer": "bt709",
+ "color_primaries": "bt709",
+ "color_space": "bt709",
+ "hdr": false,
+ "has_audio": true,
+ "sample_rate": 44100,
+ "channels": 2,
+ "output_fps": "560000/18671"
+}

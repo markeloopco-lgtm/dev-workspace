@@ -1,0 +1,161 @@
+{
+ "_説明": "at=編集後の動画での秒。x,y,size は画面に対する比。render.py が読む",
+ "assets": {
+  "sparkle": "assets/sparkle_pink.mov",
+  "glow": "assets/glow_white.mov"
+ },
+ "events": [
+  {
+   "type": "sparkle",
+   "at": 0.0,
+   "x": 0.8,
+   "y": 0.34,
+   "size": 0.45,
+   "opacity": 0.9
+  },
+  {
+   "type": "sparkle",
+   "at": 18.004,
+   "x": 0.8,
+   "y": 0.34,
+   "size": 0.45,
+   "opacity": 0.9
+  },
+  {
+   "type": "glow",
+   "at": 18.004,
+   "x": 0.5,
+   "y": 0.45,
+   "size": 0.45,
+   "opacity": 0.9
+  },
+  {
+   "type": "sparkle",
+   "at": 29.707,
+   "x": 0.8,
+   "y": 0.34,
+   "size": 0.45,
+   "opacity": 0.9
+  },
+  {
+   "type": "glow",
+   "at": 34.875,
+   "x": 0.5,
+   "y": 0.45,
+   "size": 0.45,
+   "opacity": 0.9
+  },
+  {
+   "type": "sparkle",
+   "at": 42.843,
+   "x": 0.8,
+   "y": 0.34,
+   "size": 0.45,
+   "opacity": 0.9
+  },
+  {
+   "type": "glow",
+   "at": 51.612,
+   "x": 0.5,
+   "y": 0.45,
+   "size": 0.45,
+   "opacity": 0.9
+  },
+  {
+   "type": "sparkle",
+   "at": 60.847,
+   "x": 0.8,
+   "y": 0.34,
+   "size": 0.45,
+   "opacity": 0.9
+  },
+  {
+   "type": "sparkle",
+   "at": 71.517,
+   "x": 0.8,
+   "y": 0.34,
+   "size": 0.45,
+   "opacity": 0.9
+  },
+  {
+   "type": "glow",
+   "at": 71.517,
+   "x": 0.5,
+   "y": 0.45,
+   "size": 0.45,
+   "opacity": 0.9
+  },
+  {
+   "type": "sparkle",
+   "at": 84.22,
+   "x": 0.8,
+   "y": 0.34,
+   "size": 0.45,
+   "opacity": 0.9
+  },
+  {
+   "type": "glow",
+   "at": 84.22,
+   "x": 0.5,
+   "y": 0.45,
+   "size": 0.45,
+   "opacity": 0.9
+  },
+  {
+   "type": "sparkle",
+   "at": 104.824,
+   "x": 0.8,
+   "y": 0.34,
+   "size": 0.45,
+   "opacity": 0.9
+  },
+  {
+   "type": "glow",
+   "at": 104.824,
+   "x": 0.5,
+   "y": 0.45,
+   "size": 0.45,
+   "opacity": 0.9
+  },
+  {
+   "type": "sparkle",
+   "at": 129.563,
+   "x": 0.8,
+   "y": 0.34,
+   "size": 0.45,
+   "opacity": 0.9
+  },
+  {
+   "type": "glow",
+   "at": 129.563,
+   "x": 0.5,
+   "y": 0.45,
+   "size": 0.45,
+   "opacity": 0.9
+  },
+  {
+   "type": "sparkle",
+   "at": 143.267,
+   "x": 0.8,
+   "y": 0.34,
+   "size": 0.45,
+   "opacity": 0.9
+  },
+  {
+   "type": "glow",
+   "at": 143.267,
+   "x": 0.5,
+   "y": 0.45,
+   "size": 0.45,
+   "opacity": 0.9
+  },
+  {
+   "type": "sparkle",
+   "at": 154.436,
+   "x": 0.8,
+   "y": 0.34,
+   "size": 0.45,
+   "opacity": 0.9
+  }
+ ]
+}
