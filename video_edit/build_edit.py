@@ -51,6 +51,19 @@ DEFAULTS = {
     "見出しの登場演出": ("あり", "あり/なし。見出しが変わる時に画面中央にも大きく出す"),
     "音量": ("-14", "LUFS。YouTube向けの標準は -14"),
 }
+# 縦型（スマホ縦撮り・ショート動画）のときだけ既定値を変える項目。横幅が狭いので1枚の文字数を減らす
+VERTICAL_DEFAULTS = {"テロップ文字数": "12"}
+
+
+def is_vertical(src: dict) -> bool:
+    return int(src.get("height") or 0) > int(src.get("width") or 0)
+
+
+def output_size(src: dict) -> tuple[int, int]:
+    """完成版の解像度。元動画の向きに合わせる（縦型なら 1080x1920）"""
+    return (1080, 1920) if is_vertical(src) else (1920, 1080)
+
+
 FILLER_RE = re.compile(r"(えー+と?|えっと|えーっと|ええと|あのー+|あの〜|うーん|んー+|あー+|まぁ+)[、,]?")
 PUNCT_END = "。？！?!"
 MEMO_RE = re.compile(r"[［\[]\s*メモ\s*[：:][^］\]]*[］\]]")
@@ -114,7 +127,10 @@ def write_plan(path: Path, name: str, src: dict, sents, tr: dict):
          "- 「> 」で始まる行は、直前の文の頭で画面中央に大きく出ます",
          "- ［メモ：…］はテロップに出ません", "",
          "## 設定", ""]
+    vert = is_vertical(src)
     for k, (v, note) in DEFAULTS.items():
+        if vert and k in VERTICAL_DEFAULTS:
+            v = VERTICAL_DEFAULTS[k]
         L.append(f"- {k}: {v}（{note}）")
     L += ["", "## 本編", ""]
     for i, s in enumerate(sents):
@@ -508,16 +524,18 @@ def build(name: str):
         t1 = heads[i + 1][0] if i + 1 < len(heads) else total
         if text.strip() in ("-", "ー", ""):
             continue
-        extra.append({"start": t0, "end": t1, "style": "Heading", "text": text})
+        shown = text.replace("／", r"\N")
+        extra.append({"start": t0, "end": t1, "style": "Heading", "text": shown})
         if show_card:
-            extra.append({"start": t0, "end": min(t1, t0 + 1.5), "style": "Card", "text": pop() + text})
+            extra.append({"start": t0, "end": min(t1, t0 + 1.5), "style": "Card", "text": pop() + shown})
     title = settings["オープニングタイトル"].strip()
     if title:
         extra.append({"start": 0.0, "end": min(total, 3.0), "style": "Title", "text": pop() + title.replace("／", r"\N")})
-    write_ass(proj / "telops.ass", events + extra, settings)
+    write_ass(proj / "telops.ass", events + extra, settings, vertical=is_vertical(src))
 
+    ow, oh = output_size(src)
     edit = {"version": 1, "name": name, "source": src,
-            "output": {"width": 1920, "height": 1080, "fps": src.get("output_fps") or src["fps_str"]},
+            "output": {"width": ow, "height": oh, "fps": src.get("output_fps") or src["fps_str"]},
             "zoom": {"factor": zf, "cx": zc[0], "cy": zc[1]},
             "audio": {"loudness": fnum(settings["音量"], -14)},
             "segments": out_segs, "out_frames": out_frames, "out_sec": round(total, 3)}
@@ -567,24 +585,36 @@ def markup_emph(text: str, settings):
     return display_clean_marked(plain, emph)
 
 
-def write_ass(path: Path, events, st):
+def write_ass(path: Path, events, st, vertical=False):
     acc, emc, edge = ass_color(st["テーマ色"]), ass_color(st["強調色"]), ass_color(st["縁取り色"])
     font_main, font_bold = "Rounded Mplus 1c ExtraBold", "Rounded Mplus 1c Black"
+    if vertical:
+        # 縦型ショートの配置: 字幕は画面の7割あたり（下端はアプリのUIに隠れるので避ける）、
+        # 見出しは画面上部の中央に白文字＋縁取りで出しっぱなしのタイトル帯にする
+        pw, ph = 1080, 1920
+        styles = f"""Style: Main,{font_main},72,&H00FFFFFF,&H000000FF,{edge},&H64000000,0,0,0,0,100,100,1,0,1,7,2,2,50,50,500,1
+Style: Heading,{font_bold},54,&H00FFFFFF,&H000000FF,{edge},&H64000000,0,0,0,0,100,100,2,0,1,6,0,8,40,40,110,1
+Style: Card,{font_bold},88,&H00FFFFFF,&H000000FF,{acc},&H64000000,0,0,0,0,100,100,2,0,1,9,3,5,60,60,0,1
+Style: Impact,{font_bold},104,{emc},&H000000FF,{edge},&H64000000,0,0,0,0,100,100,2,0,1,10,3,5,60,60,0,1
+Style: Title,{font_bold},96,&H00FFFFFF,&H000000FF,{acc},&H64000000,0,0,0,0,100,100,2,0,1,10,3,5,60,60,0,1"""
+    else:
+        pw, ph = 1920, 1080
+        styles = f"""Style: Main,{font_main},76,&H00FFFFFF,&H000000FF,{edge},&H64000000,0,0,0,0,100,100,1,0,1,7,2,2,60,60,56,1
+Style: Heading,{font_bold},50,&H00FFFFFF,&H000000FF,{acc},&H00000000,0,0,0,0,100,100,2,0,3,16,0,7,48,48,40,1
+Style: Card,{font_bold},104,&H00FFFFFF,&H000000FF,{acc},&H64000000,0,0,0,0,100,100,2,0,1,10,3,5,80,80,0,1
+Style: Impact,{font_bold},120,{emc},&H000000FF,{edge},&H64000000,0,0,0,0,100,100,2,0,1,11,3,5,80,80,0,1
+Style: Title,{font_bold},112,&H00FFFFFF,&H000000FF,{acc},&H64000000,0,0,0,0,100,100,2,0,1,11,3,5,80,80,0,1"""
     head = f"""[Script Info]
 ScriptType: v4.00+
-PlayResX: 1920
-PlayResY: 1080
+PlayResX: {pw}
+PlayResY: {ph}
 WrapStyle: 2
 ScaledBorderAndShadow: yes
 YCbCr Matrix: TV.709
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Main,{font_main},76,&H00FFFFFF,&H000000FF,{edge},&H64000000,0,0,0,0,100,100,1,0,1,7,2,2,60,60,56,1
-Style: Heading,{font_bold},50,&H00FFFFFF,&H000000FF,{acc},&H00000000,0,0,0,0,100,100,2,0,3,16,0,7,48,48,40,1
-Style: Card,{font_bold},104,&H00FFFFFF,&H000000FF,{acc},&H64000000,0,0,0,0,100,100,2,0,1,10,3,5,80,80,0,1
-Style: Impact,{font_bold},120,{emc},&H000000FF,{edge},&H64000000,0,0,0,0,100,100,2,0,1,11,3,5,80,80,0,1
-Style: Title,{font_bold},112,&H00FFFFFF,&H000000FF,{acc},&H64000000,0,0,0,0,100,100,2,0,1,11,3,5,80,80,0,1
+{styles}
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text

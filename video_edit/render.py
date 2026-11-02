@@ -176,7 +176,8 @@ def main(argv=None):
     edit = load_json(proj / "edit.json")
     if args.preview:
         source = Path(args.source) if args.source else WORK_DIR / args.name / "proxy.mp4"
-        W, H = 960, 540
+        vert = edit["output"]["height"] > edit["output"]["width"]
+        W, H = (540, 960) if vert else (960, 540)
         out = Path(args.out) if args.out else WORK_DIR / args.name / "preview.mp4"
     else:
         if not args.source:

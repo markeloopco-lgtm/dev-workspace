@@ -22,7 +22,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description="編集作業用のプロキシ動画と音声を作る")
     ap.add_argument("source")
     ap.add_argument("--name", required=True, help="プロジェクト名（英数字推奨）")
-    ap.add_argument("--height", type=int, default=540, help="プロキシの高さpx（既定540）")
+    ap.add_argument("--height", type=int, default=540, help="プロキシの短辺px（既定540。縦型なら幅）")
     args = ap.parse_args(argv)
 
     info = probe(args.source)
@@ -36,7 +36,8 @@ def main(argv=None):
 
     tm = tonemap_filter(info)
     # 縮小してからHDR変換（変換処理を軽くするため）
-    vf = f"fps={ofps},scale=-2:{args.height}:flags=bicubic" + ("," + tm if tm else "") + ",format=yuv420p"
+    size = f"{args.height}:-2" if info["height"] > info["width"] else f"-2:{args.height}"  # 短辺を揃える
+    vf = f"fps={ofps},scale={size}:flags=bicubic" + ("," + tm if tm else "") + ",format=yuv420p"
     cmd = ["ffmpeg", "-y", "-i", str(args.source), "-map", "0:v:0", "-vf", vf,
            "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-g", "60",
            "-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709"]
