@@ -308,7 +308,7 @@ def estimate_motion(prev, cur):
 
 # ---------------------------------------------------------------- pass1: 全フレーム計測
 
-METRIC_KEYS = ["luma", "luma_std", "sat", "colorful", "lab_a", "lab_b", "content", "hist", "pixdiff",
+METRIC_KEYS = ["luma", "luma_std", "sat", "colorful", "lab_a", "lab_b", "mag", "content", "hist", "pixdiff",
                "gradual", "blend_rel", "scale", "pan_x", "pan_y", "rot", "local", "inlier"]
 
 
@@ -350,6 +350,10 @@ def pass1(path: Path, info: dict, args):
         M["colorful"].append(math.hypot(rg.std(), yb.std()) + 0.3 * math.hypot(rg.mean(), yb.mean()))
         M["lab_a"].append(float(lab[..., 1].mean()) - 128)
         M["lab_b"].append(float(lab[..., 2].mean()) - 128)
+        # ピンク〜マゼンタの鮮やかな画素が画面の何%を占めるか（キラキラ等の色つき演出の検出用）
+        M["mag"].append(float(((hsv[..., 0] >= MAG_HUE[0]) & (hsv[..., 0] <= MAG_HUE[1])
+                               & (hsv[..., 1] >= MAG_SAT_MIN)
+                               & (hsv[..., 2] >= MAG_VAL_MIN)).mean()) * 100.0)
         hist = cv2.calcHist([hsv], [0, 1], None, [18, 8], [0, 180, 0, 256])
         cv2.normalize(hist, hist, 1, 0, cv2.NORM_L1)
         row_dark += gray.mean(axis=1) < 14
@@ -562,6 +566,34 @@ def parse_vtt(path: Path):
 
 
 # ---------------------------------------------------------------- 切り替わり検出
+
+# ピンク〜マゼンタの判定範囲（OpenCVのHSV。色相は0〜179）
+MAG_HUE = (135, 175)
+MAG_SAT_MIN = 90
+MAG_VAL_MIN = 110
+
+
+def detect_color_bursts(m: dict, N: int, fps: float, min_pct=0.30, min_frames=3):
+    """画面の一部だけが色つきで光る演出（ピンク系のキラキラなど）を拾う。
+
+    画面全体の明るさはほぼ変わらないので、白フラッシュ判定には出てこない種類の演出。
+    「鮮やかなピンク画素が画面の何%を占めるか」の時間変化から区間を取り出す。
+    """
+    mag = np.asarray(m.get("mag") or [], dtype=np.float32)
+    if mag.size == 0:
+        return []
+    base = float(np.median(mag))
+    thr = max(min_pct, base + min_pct)
+    out = []
+    for a, b in runs(mag > thr):
+        if b - a < min_frames:
+            continue
+        out.append({"kind": "color_burst", "hue": "magenta/pink",
+                    "start": int(a), "end": int(b), "frames": int(b - a),
+                    "sec": round(a / fps, 3), "dur_sec": round((b - a) / fps, 3),
+                    "peak_area_pct": round(float(mag[a:b].max()), 2)})
+    return out
+
 
 def detect_boundaries(m: dict, N: int, fps: float, args):
     """ショットの境界を検出する。
@@ -1456,6 +1488,16 @@ def write_report(path: Path, s: dict):
         if a.get("chars_per_sec"):
             L.append(f"- 話速（字幕ベース）: 約{a['chars_per_sec']}文字/秒")
         L.append("")
+    fxx = s.get("effects") or {}
+    if fxx.get("color_bursts"):
+        L.append("## 色つきの発光演出（ピンク系のキラキラなど）")
+        L.append(f"- {fxx['color_burst_count']}回 / 長さ中央値 {fxx['color_burst_frames_median']}フレーム"
+                 f" / うちカット頭で始まるもの {fxx['color_burst_at_cut']}回")
+        L.append("| # | 開始 | 長さ | 最大面積率 |")
+        L.append("| --- | --- | --- | --- |")
+        for i, cb in enumerate(fxx["color_bursts"], 1):
+            L.append(f"| {i} | {tc(cb['sec'])} | {cb['dur_sec']}秒（{cb['frames']}f） | {cb['peak_area_pct']}% |")
+        L.append("")
     L.append("## 目視レビュー用ファイル")
     L.append("- `sheets/` … 各ショットの代表フレーム一覧（ラベル: 番号 開始時刻 長さ 入り方 動き）")
     L.append("- `transitions/` … 切り替わり前後のコマ送り（赤枠 = 切り替わった直後のフレーム）")
@@ -1535,6 +1577,7 @@ def main(argv=None):
         subs_lines = parse_vtt(subs)
 
     bnd, specials, grads = detect_boundaries(m, N, fps, args)
+    color_bursts = detect_color_bursts(m, N, fps)
     shots = build_shots(m, N, fps, bnd, specials, text_samples, face_samples, audio)
     events = detect_motion_events(m, shots, fps)
     telops = track_telops(text_samples, max(1, args.text_step), fps, N / fps) if args.text_step > 0 else []
@@ -1551,6 +1594,12 @@ def main(argv=None):
 
     s = summarize(info, N, fps, m, shots, bnd, specials, grads, telops, events, jumps, audio, face_samples,
                   letterbox, overlay, pal, subs_lines, args, args.video if is_url else str(path))
+    s["effects"] = {
+        "color_bursts": color_bursts,
+        "color_burst_count": len(color_bursts),
+        "color_burst_frames_median": pct([cb["frames"] for cb in color_bursts], 50),
+        "color_burst_at_cut": sum(any(abs(cb["start"] - b) <= 2 for b in bnd) for cb in color_bursts),
+    }
     (out / "summary.json").write_text(json.dumps(to_jsonable(s), ensure_ascii=False, indent=2), encoding="utf-8")
     prof = to_jsonable(profile_from_summary(s))
     if yaml:
@@ -1571,7 +1620,7 @@ def main(argv=None):
     write_csv(out / "telops.csv", telops, ["start", "end", "start_sec", "dur_sec", "x", "y", "w", "h", "v_region",
                                            "h_align", "anim_in", "persistent", "fill", "outline", "bg", "samples"])
     ev = {"boundaries": [{"frame": f, "sec": round(f / fps, 3), "type": k} for f, k in bnd.items()],
-          "specials": specials, "gradual": grads, **events,
+          "specials": specials, "gradual": grads, "color_bursts": color_bursts, **events,
           "audio_onsets_sec": audio["onsets"] if audio else []}
     (out / "events.json").write_text(json.dumps(to_jsonable(ev), ensure_ascii=False, indent=1), encoding="utf-8")
     write_frames_csv(out / "frames.csv", m, N, fps, text_samples, face_samples, audio, bnd)
