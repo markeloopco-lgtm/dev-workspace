@@ -568,7 +568,9 @@ def parse_vtt(path: Path):
 # ---------------------------------------------------------------- 切り替わり検出
 
 # ピンク〜マゼンタの判定範囲（OpenCVのHSV。色相は0〜179）
-MAG_HUE = (135, 175)
+# 上端を170未満にしてあるのは、赤い強調テロップ（色相175〜179付近）を拾わないため。
+# 実測: 赤テロップの画素は99%が175以上、キラキラは135〜170に集中していた
+MAG_HUE = (135, 169)
 MAG_SAT_MIN = 90
 MAG_VAL_MIN = 110
 
@@ -579,7 +581,8 @@ def detect_color_bursts(m: dict, N: int, fps: float, min_pct=0.30, min_frames=3)
     画面全体の明るさはほぼ変わらないので、白フラッシュ判定には出てこない種類の演出。
     「鮮やかなピンク画素が画面の何%を占めるか」の時間変化から区間を取り出す。
     """
-    mag = np.asarray(m.get("mag") or [], dtype=np.float32)
+    raw = m.get("mag")
+    mag = np.asarray(raw if raw is not None else [], dtype=np.float32)
     if mag.size == 0:
         return []
     base = float(np.median(mag))
