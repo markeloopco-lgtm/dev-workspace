@@ -323,6 +323,18 @@ class Energy:
         k = i
         while k - 1 >= a and k - 1 < len(v) and v[k - 1]:
             k -= 1
+        # 言葉の時刻が実際の声より遅れて付くことがある（認識エンジンによる。実測で約0.3秒）。
+        # 直前0.25秒以内に終わる声のかたまり（0.06秒以上）があれば、その始まりまで含める
+        lim = max(int(lo * 100), i - 50)
+        j = min(k, len(v)) - 1
+        while j >= max(lim, k - 25) and not v[j]:
+            j -= 1
+        if lim <= j < k - 1 and v[j]:
+            m = j
+            while m - 1 >= lim and v[m - 1]:
+                m -= 1
+            if j - m + 1 >= 6:
+                k = m
         if k == i:  # 開始位置が無音なら、声が出始めるところまで進める（最大0.3秒）
             j = i
             while j < min(len(v), i + 30) and not v[j]:
@@ -341,6 +353,18 @@ class Energy:
                 j -= 1
             if j > max(int(s2 * 100), i - 30):
                 k = j + 1
+        # 逆に言葉の時刻が声より早く付き、終わりが声の途中で切れることもある。
+        # 直後0.25秒以内に始まる声のかたまり（0.06秒以上）があれば、その終わりまで含める
+        lim2 = min(int(hi * 100), len(v), i + 50)
+        j = k
+        while j < min(lim2, k + 25) and not v[j]:
+            j += 1
+        if k <= j < lim2 and v[j] and (j > k or k == i):
+            m = j
+            while m + 1 < lim2 and v[m + 1]:
+                m += 1
+            if m - j + 1 >= 6:
+                k = m + 1
         e2 = k / 100
         return (s2, e2) if e2 > s2 else (s, e)
 

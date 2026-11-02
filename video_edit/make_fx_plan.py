@@ -69,9 +69,10 @@ def main(argv=None):
                     help="video_style の解析フォルダ。出現密度をここから読む")
     ap.add_argument("--sparkle-every", type=float, help=f"キラキラを何秒に1回（既定 {DEFAULT_SPARKLE_EVERY}）")
     ap.add_argument("--glow-every", type=float, help=f"白発光を何秒に1回（既定 {DEFAULT_GLOW_EVERY}）")
-    ap.add_argument("--sparkle-size", type=float, default=0.62, help="キラキラの大きさ(画面幅比)")
+    ap.add_argument("--sparkle-size", type=float, default=0.45, help="キラキラの大きさ(画面幅比)")
     ap.add_argument("--glow-size", type=float, default=0.45)
-    ap.add_argument("--sparkle-pos", default="0.50,0.52", help="キラキラの位置 x,y（画面比）")
+    ap.add_argument("--sparkle-pos", default="0.80,0.34",
+                    help="キラキラの位置 x,y（画面比）。既定は顔の右横（中央だと話し手の顔に重なる）")
     ap.add_argument("--glow-pos", default="0.50,0.45")
     ap.add_argument("--opacity", type=float, default=0.9)
     ap.add_argument("--assets", default="assets", help="素材フォルダ（プロジェクトからの相対）")

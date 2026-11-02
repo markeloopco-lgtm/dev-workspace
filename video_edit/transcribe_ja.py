@@ -30,6 +30,10 @@ SR = 16000
 MAX_CHUNK = 30.0      # 秒。長い区間はこれ以下に切る。短く切りすぎると文脈が減って言葉を落とす
 MIN_CHUNK = 15.0      # 秒。切るときは最低これだけは残す（実測: 12秒で切ると抜けが増えた）
 SENT_GAP = 0.55       # 秒。言葉と言葉の間がこれ以上空いたら文を区切る
+PRE_CONTEXT = 0.3     # 秒。区間の手前の音も含めて認識する（発話区間の検出は話し始めより少し遅れ、
+                      #     頭ちょうどから渡すと最初の言葉「その」「ご登録」などを落とす）
+PRE_SILENCE = 0.3     # 秒。さらに頭に無音を足す（実測でこの組み合わせが一番多く拾えた）
+POST_CONTEXT = 0.3    # 秒。区間の後ろも少し含める
 
 
 def read_wav(path: Path) -> np.ndarray:
@@ -109,9 +113,13 @@ def main(argv=None):
 
     # 区間ごとに認識し、言葉ごとの時刻を元動画の時刻に直す
     words = []
+    prev_end = 0.0
     for a, b in chunks:
+        a2 = max(0, a - int(PRE_CONTEXT * SR))
+        b2 = min(len(x), b + int(POST_CONTEXT * SR))
+        audio = np.concatenate([np.zeros(int(PRE_SILENCE * SR), np.float32), x[a2:b2]])
         st = rec.create_stream()
-        st.accept_waveform(SR, x[a:b])
+        st.accept_waveform(SR, audio)
         rec.decode_stream(st)
         r = st.result
         toks, ts = list(r.tokens or []), list(r.timestamps or [])
@@ -119,13 +127,17 @@ def main(argv=None):
         # 1文字目は次の文字の直前に寄せる
         if len(ts) >= 2 and ts[1] - ts[0] > 0.8:
             ts[0] = ts[1] - 0.12
-        base, end = a / SR, b / SR
+        base, end = a2 / SR - PRE_SILENCE, b2 / SR
         for i, (tok, t) in enumerate(zip(toks, ts)):
-            s = base + float(t)
+            s = max(a2 / SR, base + float(t))
+            if s < prev_end - 0.02:        # 手前に含めた部分で、前の区間と同じ言葉を二重に拾わない
+                continue
             e = base + float(ts[i + 1]) if i + 1 < len(ts) else min(end, s + 0.3)
             e = max(e, s + 0.04)
             words.append({"start": round(s, 3), "end": round(min(e, s + 0.6), 3), "word": tok, "p": 0.9,
                           "chunk_end": i + 1 == len(toks)})
+        if words:
+            prev_end = max(prev_end, words[-1]["end"])
 
     # 間が空いた所・区間の切れ目で文を区切る
     segs, cur = [], []
